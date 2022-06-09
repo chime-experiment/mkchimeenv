@@ -9,7 +9,8 @@ $ mkchimeenv create mychimeenv
 It will:
 - Create a virtual environment in `mychimeenv/venv`
 - Clone all the CHIME pipeline packages into `mychimeenv/code`
-- Install all their dependencies into the virtual environment
+- Try to determine and then install all their dependencies into the virtual
+  environment
 - Perform editable installs of all the CHIME pipeline packages so you can hack
   on them to your hearts content.
 
@@ -24,3 +25,7 @@ got it setup. To test this works try cloning a small private repository, e.g.
 ```
 $ git clone ssh://git@github.com/chime-experiment/mkchimeenv
 ```
+
+To speed up the creation you can use the `--fast` option to the create command.
+This will turn off build isolation when pip is installing the packages, which
+will give a large speed boost (especially on cedar), but may be less robust.
