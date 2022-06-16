@@ -162,7 +162,10 @@ def install_multiple(
 @click.option(
     "--fast", is_flag=True, help="Turn on some speedups that could break the install."
 )
-def create(path: Path, prompt: str, fast: bool):
+@click.option(
+    "--download/--no-download", default=True, help="Download the skyfield data."
+)
+def create(path: Path, prompt: str, fast: bool, download: bool):
     """Install a CHIME pipeline environment at the specified PATH.
 
     This will create a virtualenvironment and make editable installs of all the CHIME
@@ -308,6 +311,18 @@ def create(path: Path, prompt: str, fast: bool):
                 options += ["--no-build-isolation"]
             env.install(f"-e {code_path / chime_package}", options=options)
             progress.reset(task, total=1, completed=1)
+
+    console.rule("Downloading skyfield ephemeris data")
+    try:
+        env._execute(
+            [
+                env._python_rpath,
+                "-c",
+                "from caput.time import skyfield_wrapper as s; s.timescale; s.ephemeris",
+            ]
+        )
+    except Exception as e:
+        console.print(f"Failed to download skyfield data. Error: {e}")
 
 
 @cli.command()
