@@ -21,6 +21,8 @@ It will:
   environment
 - Perform editable installs of all the CHIME pipeline packages so you can hack
   on them to your hearts content.
+- Download the skyfield data required by `caput/ch_util` for ephemeris
+  calculations.
 
 To activate the environment just run `source mychimeenv/venv/bin/activate`.
 
