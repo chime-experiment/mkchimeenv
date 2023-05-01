@@ -18,7 +18,7 @@ from requirements_detector.requirement import DetectedRequirement
 from virtualenvapi.manage import VirtualEnvironment
 
 
-__version__ = "2022.06"
+__version__ = "2023.05"
 
 
 def _clone_path(repo, ssh=True):
