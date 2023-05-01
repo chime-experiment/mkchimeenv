@@ -109,7 +109,6 @@ class RichProgress(git.RemoteProgress):
         self.tasks: dict[int, int] = {}
 
     def update(self, op_code, cur_count, max_count=None, message=""):
-
         code, msg, done = match_opcode(op_code)
 
         if code not in self.tasks:
@@ -145,7 +144,6 @@ def install_multiple(
 
     # Use a temporary requirements file and then use the usual `env.install`
     with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tfh:
-
         for pkg in packages:
             tfh.write(f"{pkg}\n")
 
@@ -165,7 +163,12 @@ def install_multiple(
 @click.option(
     "--download/--no-download", default=True, help="Download the skyfield data."
 )
-def create(path: Path, prompt: str, fast: bool, download: bool):
+@click.option(
+    "--ignore-system-packages", is_flag=True, help="Ignore system site packages"
+)
+def create(
+    path: Path, prompt: str, fast: bool, download: bool, ignore_system_packages: bool
+):
     """Install a CHIME pipeline environment at the specified PATH.
 
     This will create a virtualenvironment and make editable installs of all the CHIME
@@ -195,7 +198,7 @@ def create(path: Path, prompt: str, fast: bool, download: bool):
     else:
         venv.create(
             venv_path,
-            system_site_packages=True,
+            system_site_packages=not ignore_system_packages,
             with_pip=True,
             prompt=prompt,
         )
@@ -216,7 +219,6 @@ def create(path: Path, prompt: str, fast: bool, download: bool):
         console=console,
     ) as progress:
         for label, (name, (url, target)) in labeller(chime_repositories.items()):
-
             clone_path = code_path / name
 
             git.Repo.clone_from(
@@ -274,7 +276,6 @@ def create(path: Path, prompt: str, fast: bool, download: bool):
         *Progress.get_default_columns()[:-1],
         console=console,
     ) as progress:
-
         for label, (reqname, reqs) in labeller(req_dict.items()):
             task = progress.add_task(f"{label} {reqname}", total=None)
 
@@ -298,9 +299,7 @@ def create(path: Path, prompt: str, fast: bool, download: bool):
         *Progress.get_default_columns()[:-1],
         console=console,
     ) as progress:
-
         for label, chime_package in labeller(chime_repo_names):
-
             task = progress.add_task(
                 f"{label} {chime_package}",
                 total=None,
