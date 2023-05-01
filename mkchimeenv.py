@@ -21,7 +21,7 @@ from virtualenvapi.manage import VirtualEnvironment
 __version__ = "2022.06"
 
 
-chime_repositories = {
+public_repositories = {
     # radio cosmology packages
     "caput": ("ssh://git@github.com/radiocosmology/caput", None),
     "cora": ("ssh://git@github.com/radiocosmology/cora", None),
@@ -29,7 +29,6 @@ chime_repositories = {
     "draco": ("ssh://git@github.com/radiocosmology/draco", None),
     # chimedb core code and extensions
     "chimedb": ("ssh://git@github.com/chime-experiment/chimedb", None),
-    "chimedb-config": ("ssh://git@github.com/chime-experiment/chimedb_config", None),
     "chimedb-data_index": ("ssh://git@github.com/chime-experiment/chimedb_di", None),
     "chimedb-dataflag": (
         "ssh://git@github.com/chime-experiment/chimedb_dataflag",
@@ -39,6 +38,10 @@ chime_repositories = {
     # chime specific repositories
     "ch_util": ("ssh://git@github.com/chime-experiment/ch_util", None),
     "ch_pipeline": ("ssh://git@github.com/chime-experiment/ch_pipeline", None),
+}
+
+private_repositories = {
+    "chimedb-config": ("ssh://git@github.com/chime-experiment/chimedb_config", None),
 }
 
 # At the moment this script struggles to determine extra requirements and so I just list
@@ -164,10 +167,20 @@ def install_multiple(
     "--download/--no-download", default=True, help="Download the skyfield data."
 )
 @click.option(
-    "--ignore-system-packages", is_flag=True, help="Ignore system site packages"
+    "--ignore-system-packages", is_flag=True, help="Ignore system site packages."
+)
+@click.option(
+    "--chime-member/--non-chime-member",
+    default=True,
+    help="Whether to include private CHIME repositories.",
 )
 def create(
-    path: Path, prompt: str, fast: bool, download: bool, ignore_system_packages: bool
+    path: Path,
+    prompt: str,
+    fast: bool,
+    download: bool,
+    ignore_system_packages: bool,
+    chime_member: bool,
 ):
     """Install a CHIME pipeline environment at the specified PATH.
 
@@ -205,6 +218,12 @@ def create(
     env = VirtualEnvironment(str(venv_path))
     console.print("Upgrading pip")
     env.upgrade("pip")
+
+    # Determine which repositories to close
+    if chime_member:
+        chime_repositories = {**public_repositories, **private_repositories}
+    else:
+        chime_repositories = public_repositories
 
     # Clone the CHIME repos and extract their dependencies
     console.rule("Cloning CHIME repositories")
