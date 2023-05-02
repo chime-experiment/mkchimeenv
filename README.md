@@ -26,7 +26,8 @@ It will:
 
 To activate the environment just run `source mychimeenv/venv/bin/activate`.
 
-The repositories are cloned from Github via ssh. Make sure you can clone the
+By default, the repositories are cloned from Github via ssh.
+If you're a CHIME Collaboration member, make sure you can clone the
 repositories without requiring a passphrase for the key, either by using a
 passphrase-less key, or (recommended) using an ssh-agent to keep the unlocked
 key in memory. You will also need to be added to the *chime-experiment*
@@ -35,6 +36,16 @@ got it setup. To test this works try cloning a small private repository, e.g.
 ```
 $ git clone ssh://git@github.com/chime-experiment/mkchimeenv
 ```
+
+If you are not a CHIME Collaboration member, the command will still work for you if
+you use the `--non-chime-member` option. This option will omit CHIME-internal packages
+from the virtual environment, and also clone the repositories using https instead of
+ssh, which does not require a passphrase-less key to be set up.
+
+When installing on your own computer, the `--ignore-system-packages` will ignore
+packages that are already installed into your base Python environment, and will instead
+perform fresh installs of the required packages into the new virtual environment. This
+can sometimes be useful for avoiding conflicts with your existing Python setup.
 
 To speed up the creation you can use the `--fast` option to the create command.
 This will turn off build isolation when pip is installing the packages, which
