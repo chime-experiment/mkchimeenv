@@ -21,27 +21,42 @@ from virtualenvapi.manage import VirtualEnvironment
 __version__ = "2022.06"
 
 
-public_repositories = {
-    # radio cosmology packages
-    "caput": ("ssh://git@github.com/radiocosmology/caput", None),
-    "cora": ("ssh://git@github.com/radiocosmology/cora", None),
-    "driftscan": ("ssh://git@github.com/radiocosmology/driftscan", None),
-    "draco": ("ssh://git@github.com/radiocosmology/draco", None),
-    # chimedb core code and extensions
-    "chimedb": ("ssh://git@github.com/chime-experiment/chimedb", None),
-    "chimedb-data_index": ("ssh://git@github.com/chime-experiment/chimedb_di", None),
-    "chimedb-dataflag": (
-        "ssh://git@github.com/chime-experiment/chimedb_dataflag",
-        None,
-    ),
-    "chimedb-dataset": ("ssh://git@github.com/chime-experiment/chimedb_dataset", None),
-    # chime specific repositories
-    "ch_util": ("ssh://git@github.com/chime-experiment/ch_util", None),
-    "ch_pipeline": ("ssh://git@github.com/chime-experiment/ch_pipeline", None),
-}
+def _clone_path(repo, ssh=True):
+    if ssh:
+        return f"ssh://git@github.com/{repo}"
+    else:
+        return f"https://github.com/{repo}.git"
+
+
+def public_repositories(ssh=True):
+    return {
+        # radio cosmology packages
+        "caput": (_clone_path("radiocosmology/caput", ssh=ssh), None),
+        "cora": (_clone_path("radiocosmology/cora", ssh=ssh), None),
+        "driftscan": (_clone_path("radiocosmology/driftscan", ssh=ssh), None),
+        "draco": (_clone_path("radiocosmology/draco", ssh=ssh), None),
+        # chimedb core code and extensions
+        "chimedb": (_clone_path("chime-experiment/chimedb", ssh=ssh), None),
+        "chimedb-data_index": (
+            _clone_path("chime-experiment/chimedb_di", ssh=ssh),
+            None,
+        ),
+        "chimedb-dataflag": (
+            _clone_path("chime-experiment/chimedb_dataflag", ssh=ssh),
+            None,
+        ),
+        "chimedb-dataset": (
+            _clone_path("chime-experiment/chimedb_dataset", ssh=ssh),
+            None,
+        ),
+        # chime specific repositories
+        "ch_util": (_clone_path("chime-experiment/ch_util", ssh=ssh), None),
+        "ch_pipeline": (_clone_path("chime-experiment/ch_pipeline", ssh=ssh), None),
+    }
+
 
 private_repositories = {
-    "chimedb-config": ("ssh://git@github.com/chime-experiment/chimedb_config", None),
+    "chimedb-config": (_clone_path("chime-experiment/chimedb_config", ssh=True), None),
 }
 
 # At the moment this script struggles to determine extra requirements and so I just list
@@ -221,9 +236,9 @@ def create(
 
     # Determine which repositories to close
     if chime_member:
-        chime_repositories = {**public_repositories, **private_repositories}
+        chime_repositories = {**public_repositories(ssh=True), **private_repositories}
     else:
-        chime_repositories = public_repositories
+        chime_repositories = public_repositories(ssh=False)
 
     # Clone the CHIME repos and extract their dependencies
     console.rule("Cloning CHIME repositories")
