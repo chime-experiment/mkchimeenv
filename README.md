@@ -5,7 +5,7 @@ environments. On cedar this is probably preinstalled into the `chime/python`
 module. If you want to install it yourself (e.g. on your own machine) it can be
 done using `pip` in the usual manner:
 ```
-$ pip install "mkchimeenv @ git+ssh://git@github.com/chime-experiment/mkchimeenv.git"
+$ pip install "mkchimeenv @ git+https://github.com/chime-experiment/mkchimeenv.git"
 ```
 which will install its dependencies and the `mkchimeenv` command into the
 Python environment. To use it to create a new CHIME pipeline installation, try
