@@ -34,7 +34,7 @@ key in memory. You will also need to be added to the *chime-experiment*
 organisation, ask a friendly CHIME sysadmin to do this if you haven't already
 got it setup. To test this works try cloning a small private repository, e.g.
 ```
-$ git clone ssh://git@github.com/chime-experiment/mkchimeenv
+$ git clone ssh://git@github.com/chime-experiment/chimedb_config
 ```
 
 If you are not a CHIME Collaboration member, the command will still work for you if
