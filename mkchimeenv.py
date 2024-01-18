@@ -342,7 +342,10 @@ def create(
             options = ["--no-deps"]
             if fast:
                 options += ["--no-build-isolation"]
-            env.install(f"-e {code_path / chime_package}", options=options)
+            env.install(
+                f"-e {code_path / chime_package} --config-settings editable_mode=compat",
+                options=options,
+            )
             progress.reset(task, total=1, completed=1)
 
     console.rule("Downloading skyfield ephemeris data")
