@@ -18,7 +18,7 @@ from requirements_detector.requirement import DetectedRequirement
 from virtualenvapi.manage import VirtualEnvironment
 
 
-__version__ = "2023.05"
+__version__ = "2024.03"
 
 
 def _clone_path(repo, ssh=True):
@@ -62,6 +62,7 @@ private_repositories = {
 # At the moment this script struggles to determine extra requirements and so I just list
 # them by hand here
 extra_packages = [
+    "versioneer",
     "bitshuffle",
     "numcodecs",
     "zarr",
