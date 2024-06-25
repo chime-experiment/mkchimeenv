@@ -1,4 +1,5 @@
 """Install and manage CHIME pipeline environments."""
+
 from pathlib import Path
 import sys
 import tempfile
@@ -66,6 +67,7 @@ extra_packages = [
     "bitshuffle",
     "numcodecs",
     "zarr",
+    "papermill",  # used to render jupyter notebooks
 ]
 
 
