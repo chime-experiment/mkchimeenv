@@ -181,6 +181,7 @@ def install_multiple(
 @click.option(
     "--fast", is_flag=True, help="Turn on some speedups that could break the install."
 )
+@click.option("--compat", is_flag=True, help="Use legacy editable install mode.")
 @click.option(
     "--download/--no-download", default=True, help="Download the skyfield data."
 )
@@ -196,6 +197,7 @@ def create(
     path: Path,
     prompt: str,
     fast: bool,
+    compat: bool,
     download: bool,
     ignore_system_packages: bool,
     chime_member: bool,
@@ -345,6 +347,8 @@ def create(
             options = ["--no-deps"]
             if fast:
                 options += ["--no-build-isolation"]
+            if compat:
+                options += ["--config-settings", "editable_mode=compat"]
             env.install(f"-e {code_path / chime_package}", options=options)
             progress.reset(task, total=1, completed=1)
 
