@@ -49,4 +49,12 @@ can sometimes be useful for avoiding conflicts with your existing Python setup.
 
 To speed up the creation you can use the `--fast` option to the create command.
 This will turn off build isolation when pip is installing the packages, which
-will give a large speed boost (especially on cedar), but may be less robust.
+will give a large speed boost (especially on cedar), but may be less robust. This option
+generally does not work on macOS.
+
+When using language tools such as Pylance (which is generally enabled by default in
+VSCode) or other type-checkers, the `--compat` flag should be used. The CHIME libraries
+are installed in editable mode, and recent updates to setuptools will break language
+tools ability to find the source files associated with any packages installed in
+editable mode. This flag enables legacy editable install behaviour, allowing Pylance
+and other tools to work correctly.
