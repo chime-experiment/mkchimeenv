@@ -3,6 +3,7 @@
 from pathlib import Path
 import sys
 import tempfile
+import toml
 from typing import Optional, Tuple, List
 import venv
 
@@ -13,13 +14,12 @@ from packaging.utils import canonicalize_name
 from rich.progress import Progress
 from rich.console import Console
 
-from requirements_detector import find_requirements
-from requirements_detector.requirement import DetectedRequirement
+from packaging.requirements import Requirement, InvalidRequirement
 
 from virtualenvapi.manage import VirtualEnvironment
 
 
-__version__ = "2024.03"
+__version__ = "2024.08"
 
 
 def _clone_path(repo, ssh=True):
@@ -104,6 +104,42 @@ def match_opcode(opcode: int) -> Tuple[int, str, bool]:
             return (code, msg, done)
     else:
         return (0, "Unknown", done)
+
+
+def find_requirements(path: str) -> List[Requirement]:
+    """Read and structure dependencies in a pyproject.toml file.
+
+    Parameters
+    ----------
+    path
+        Project path
+
+    Returns
+    -------
+    requirements
+        List of parsed Requirement objects
+    """
+    requirements = []
+
+    # Get the project file as a pathlib path
+    file = Path(path) / "pyproject.toml"
+
+    if not file.is_file():
+        raise FileNotFoundError(f"Project file {file} not found.")
+
+    data = toml.load(file)
+    project = data.get("project", {})
+    dependencies = project.get("dependencies", {}).copy()
+
+    for item in dependencies:
+        try:
+            req = Requirement(item)
+        except InvalidRequirement:
+            continue
+
+        requirements.append(req)
+
+    return sorted(requirements, key=lambda x: x.name)
 
 
 class RichProgress(git.RemoteProgress):
@@ -269,13 +305,7 @@ def create(
 
             requirements += find_requirements(clone_path)
 
-    console.rule("Analyzing dependencies")
-    for req in requirements:
-        if req.name is None and "@" in req.url:
-            name, url = req.url.split("@")
-            name = name.split("[")[0]
-            req.name = name.rstrip()
-            req.url = url.lstrip()
+    console.rule("Analyzing dependencies...")
     console.print(f"{len(requirements)} total dependencies.")
 
     # Remove the specified CHIME packages from the install list
@@ -296,7 +326,7 @@ def create(
     console.print(f"{len(requirements)} after removing already installed packages.")
 
     # Add the extras to make up for problems parsing
-    requirements += [DetectedRequirement(req) for req in extra_packages]
+    requirements += [Requirement(req) for req in extra_packages]
     console.print(f"{len(requirements)} after adding manual extras.")
 
     # Group packages together by name to prevent repeated install attempts
@@ -320,9 +350,7 @@ def create(
 
             # Request all versions of the same package be installed at once and let pip
             # figure out what to actually do
-            req_strs = [
-                f"{req.name} @ {req.url}" if req.url else str(req) for req in reqs
-            ]
+            req_strs = [str(req) for req in reqs]
             options = ["--no-build-isolation"] if fast else None
             install_multiple(env, list(set(req_strs)), options=options)
             progress.reset(task, total=1, completed=1)

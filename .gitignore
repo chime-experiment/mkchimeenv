@@ -1,0 +1,3 @@
+# Ignore directories that come from installing
+build
+*.egg*

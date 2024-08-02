@@ -1,23 +1,39 @@
 [build-system]
-requires = ["flit_core >=3.2,<4"]
-build-backend = "flit_core.buildapi"
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "mkchimeenv"
-authors = [{name = "Richard Shaw", email = "richard@phas.ubc.ca"}]
+description = "Build a CHIME Python environment"
+authors = [
+    {name = "The CHIME Collaboration", email = "lgray@phas.ubc.ca"}
+]
+maintainers = [
+    { name = "Liam Gray", email = "lgray@phas.ubc.ca" },
+    { name = "Don Wiebe", email = "dvw@phas.ubc.ca" }
+]
 license = {file = "LICENSE"}
-readme = "README.md"
-classifiers = ["License :: OSI Approved :: MIT License"]
-dynamic = ["version", "description"]
+dynamic = ["version", "readme"]
 requires-python = ">=3.9"
 dependencies = [
-    "requirements-detector @ git+https://github.com/ljgray/requirements-detector.git",
     "virtualenv",
     "virtualenv-api",
     "GitPython",
     "rich",
     "click >= 8.0",
 ]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 
 [project.scripts]
 mkchimeenv = "mkchimeenv:cli"
+
+[tool.setuptools.dynamic]
+readme = { file = ["README.md"], content-type = "text/markdown" }
