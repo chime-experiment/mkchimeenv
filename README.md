@@ -1,7 +1,7 @@
 # Create and Manage CHIME pipeline environments
 
 This package provides the `mkchimeenv` command to manage CHIME pipeline
-environments. On cedar this is probably preinstalled into the `chime/python`
+environments. On cedar this is probably pre-installed into the `chime/python`
 module. If you want to install it yourself (e.g. on your own machine) it can be
 done using `pip` in the usual manner:
 ```
@@ -21,8 +21,7 @@ It will:
   environment
 - Perform editable installs of all the CHIME pipeline packages so you can hack
   on them to your hearts content.
-- Download the skyfield data required by `caput/ch_util` for ephemeris
-  calculations.
+- Download the skyfield data required for ephemeris calculations.
 
 To activate the environment just run `source mychimeenv/venv/bin/activate`.
 
