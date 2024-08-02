@@ -51,6 +51,7 @@ def public_repositories(ssh=True):
             None,
         ),
         # chime specific repositories
+        "ch_ephem": (_clone_path("chime-experiment/ch_ephem", ssh=ssh), None),
         "ch_util": (_clone_path("chime-experiment/ch_util", ssh=ssh), None),
         "ch_pipeline": (_clone_path("chime-experiment/ch_pipeline", ssh=ssh), None),
     }
