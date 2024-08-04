@@ -213,20 +213,36 @@ def install_multiple(
 @cli.command()
 @click.argument("path", default=".", type=click.Path(resolve_path=True, path_type=Path))
 @click.option(
-    "--prompt", default="venv", type=str, help="Set the virtualenv prompt prefix."
+    "--prompt",
+    show_default=True,
+    default="venv",
+    type=str,
+    help="Set the virtualenv prompt prefix.",
 )
 @click.option(
-    "--fast", is_flag=True, help="Turn on some speedups that could break the install."
-)
-@click.option("--compat", is_flag=True, help="Use legacy editable install mode.")
-@click.option(
-    "--download/--no-download", default=True, help="Download the skyfield data."
+    "--fast/--slow",
+    show_default=True,
+    help="Whether to turn on some speedups that could break the install.",
 )
 @click.option(
-    "--ignore-system-packages", is_flag=True, help="Ignore system site packages."
+    "--compat/--no-compat",
+    show_default=True,
+    help="Whether to use legacy editable install mode.",
+)
+@click.option(
+    "--download/--no-download",
+    show_default=True,
+    default=True,
+    help="Whether to try to download the skyfield data.",
+)
+@click.option(
+    "--ignore-system-packages/--use-system-packages",
+    show_default=True,
+    help="Whether to ignore system site packages when creating the virtualen v.",
 )
 @click.option(
     "--chime-member/--non-chime-member",
+    show_default=True,
     default=True,
     help="Whether to include private CHIME repositories.",
 )
@@ -381,17 +397,18 @@ def create(
             env.install(f"-e {code_path / chime_package}", options=options)
             progress.reset(task, total=1, completed=1)
 
-    console.rule("Downloading skyfield ephemeris data")
-    try:
-        env._execute(
-            [
-                env._python_rpath,
-                "-c",
-                "from caput.time import skyfield_wrapper as s; s.timescale; s.ephemeris",
-            ]
-        )
-    except Exception as e:
-        console.print(f"Failed to download skyfield data. Error: {e}")
+    if download:
+        console.rule("Downloading skyfield ephemeris data")
+        try:
+            env._execute(
+                [
+                    env._python_rpath,
+                    "-c",
+                    "from caput.time import skyfield_wrapper as s; s.timescale; s.ephemeris",
+                ]
+            )
+        except Exception as e:
+            console.print(f"Failed to download skyfield data. Error: {e}")
 
 
 @cli.command()
