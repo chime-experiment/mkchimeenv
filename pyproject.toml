@@ -14,22 +14,24 @@ maintainers = [
 ]
 license = {file = "LICENSE"}
 dynamic = ["version", "readme"]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "virtualenv",
     "virtualenv-api",
     "GitPython",
     "rich",
+    "toml",
+    "packaging",
     "click >= 8.0",
 ]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 
 [project.scripts]
@@ -37,3 +39,6 @@ mkchimeenv = "mkchimeenv:cli"
 
 [tool.setuptools.dynamic]
 readme = { file = ["README.md"], content-type = "text/markdown" }
+
+[tool.ruff]
+target-version = "py310"

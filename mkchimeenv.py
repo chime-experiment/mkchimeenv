@@ -19,7 +19,7 @@ from packaging.requirements import Requirement, InvalidRequirement
 from virtualenvapi.manage import VirtualEnvironment
 
 
-__version__ = "2024.08"
+__version__ = "2025.03"
 
 
 def _clone_path(repo, ssh=True):
@@ -64,11 +64,11 @@ private_repositories = {
 # At the moment this script struggles to determine extra requirements and so I just list
 # them by hand here
 extra_packages = [
-    "versioneer",
     "bitshuffle",
     "numcodecs",
     "zarr",
     "papermill",  # used to render jupyter notebooks
+    "pyfftw",
 ]
 
 
