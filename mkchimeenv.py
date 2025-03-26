@@ -61,15 +61,9 @@ private_repositories = {
     "chimedb-config": (_clone_path("chime-experiment/chimedb_config", ssh=True), None),
 }
 
-# At the moment this script struggles to determine extra requirements and so I just list
-# them by hand here
-extra_packages = [
-    "bitshuffle",
-    "numcodecs",
-    "zarr",
-    "papermill",  # used to render jupyter notebooks
-    "pyfftw",
-]
+# List any extra requirements here
+# TODO: get rid of this and move papermill to the `jupyter` modules
+extra_packages = ["papermill"]
 
 
 def match_opcode(opcode: int) -> Tuple[int, str, bool]:
@@ -141,6 +135,47 @@ def find_requirements(path: str) -> List[Requirement]:
         requirements.append(req)
 
     return sorted(requirements, key=lambda x: x.name)
+
+
+def find_optional_requirements(path: str) -> dict:
+    """Read and structure optional dependencies in a pyproject.toml file.
+
+    Parameters
+    ----------
+    path
+        Project path
+
+    Returns
+    -------
+    requirements
+        Dict of parsed Requirement objects
+    """
+    requirements = {}
+
+    # Get the project file
+    file = Path(path) / "pyproject.toml"
+
+    if not file.is_file():
+        raise FileNotFoundError(f"Project file {file} not found.")
+
+    data = toml.load(file)
+    project = data.get("project", {})
+    dependencies = project.get("optional-dependencies", {})
+
+    for item, reqs in dependencies.items():
+        reqlist = []
+        for req in reqs:
+            try:
+                reqlist.append(Requirement(req))
+            except InvalidRequirement:
+                continue
+
+        if item in requirements:
+            requirements[item].extend(reqlist)
+        else:
+            requirements[item] = reqlist
+
+    return requirements
 
 
 class RichProgress(git.RemoteProgress):
@@ -305,6 +340,7 @@ def create(
     code_path.mkdir()
 
     requirements = []
+    optional_requirements = {}
 
     with Progress(
         *Progress.get_default_columns()[:-1],
@@ -321,12 +357,23 @@ def create(
             )
 
             requirements += find_requirements(clone_path)
+            # Find all the available optional requirements for this repo.
+            # We'll use this to look them up later
+            optional_requirements[name] = find_optional_requirements(clone_path)
+
+    # Find requirements which are optional dependencies of CHIME packages
+    # and add them to the rest of the requirements
+    chime_repo_names = list(chime_repositories.keys())
+
+    for req in requirements.copy():
+        if req.name.replace(".", "-") in chime_repo_names:
+            for extra in req.extras:
+                requirements.extend(optional_requirements[req.name][extra])
 
     console.rule("Analyzing dependencies...")
     console.print(f"{len(requirements)} total dependencies.")
 
     # Remove the specified CHIME packages from the install list
-    chime_repo_names = list(chime_repositories.keys())
     requirements = [
         req
         for req in requirements
@@ -348,7 +395,7 @@ def create(
 
     # Group packages together by name to prevent repeated install attempts
     req_dict = {}
-    for req in requirements:
+    for req in sorted(requirements, key=lambda x: x.name):
         name = canonicalize_name(req.name)
         if name not in req_dict:
             req_dict[name] = []
