@@ -36,6 +36,7 @@ def public_repositories(ssh=True):
         "cora": (_clone_path("radiocosmology/cora", ssh=ssh), None),
         "driftscan": (_clone_path("radiocosmology/driftscan", ssh=ssh), None),
         "draco": (_clone_path("radiocosmology/draco", ssh=ssh), None),
+        "fluxcat": (_clone_path("radiocosmology/fluxcat", ssh=ssh), None),
         # chimedb core code and extensions
         "chimedb": (_clone_path("chime-experiment/chimedb", ssh=ssh), None),
         "chimedb-data_index": (
