@@ -62,8 +62,7 @@ private_repositories = {
 }
 
 # List any extra requirements here
-# TODO: get rid of this and move papermill to the `jupyter` modules
-extra_packages = ["papermill"]
+extra_packages = []
 
 
 def match_opcode(opcode: int) -> Tuple[int, str, bool]:
