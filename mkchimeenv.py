@@ -4,9 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import toml
-from typing import Optional, Tuple, List
 import venv
-
 
 import click
 import git
@@ -18,8 +16,15 @@ from packaging.requirements import Requirement, InvalidRequirement
 
 from virtualenvapi.manage import VirtualEnvironment
 
+from importlib.metadata import PackageNotFoundError, version
 
-__version__ = "2025.03"
+try:
+    __version__ = version("mkchimeenv")
+except PackageNotFoundError:
+    # package is not installed
+    pass
+
+del version, PackageNotFoundError
 
 
 def _clone_path(repo, ssh=True):
@@ -65,7 +70,7 @@ private_repositories = {
 extra_packages = []
 
 
-def match_opcode(opcode: int) -> Tuple[int, str, bool]:
+def match_opcode(opcode: int) -> tuple[int, str, bool]:
     """Match GitPython opcode to a description of the operation.
 
     Parameters
@@ -100,7 +105,7 @@ def match_opcode(opcode: int) -> Tuple[int, str, bool]:
         return (0, "Unknown", done)
 
 
-def find_requirements(path: str) -> List[Requirement]:
+def find_requirements(path: str) -> list[Requirement]:
     """Read and structure dependencies in a pyproject.toml file.
 
     Parameters
@@ -230,7 +235,7 @@ def cli():
 
 
 def install_multiple(
-    env: VirtualEnvironment, packages: List[str], options: Optional[List[str]] = None
+    env: VirtualEnvironment, packages: list[str], options: list[str] | None = None
 ):
     """Install multiple packages into a virtualenvironment at once."""
 
