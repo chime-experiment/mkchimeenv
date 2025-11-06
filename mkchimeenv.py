@@ -230,6 +230,7 @@ def labeller(enumerable):
 
 
 @click.group()
+@click.version_option(__version__)
 def cli():
     """Create and manage CHIME python environments."""
     pass
