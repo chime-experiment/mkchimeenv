@@ -471,4 +471,4 @@ def update(path):
 
     Not yet implemented.
     """
-    pass
+    raise NotImplementedError()
