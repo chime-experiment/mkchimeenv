@@ -457,7 +457,7 @@ def create(
                 [
                     env._python_rpath,
                     "-c",
-                    "from caput.time import skyfield_wrapper as s; s.timescale; s.ephemeris",
+                    "from caput.astro.skyfield import skyfield_wrapper as s; s.timescale; s.ephemeris",
                 ]
             )
         except Exception as e:
