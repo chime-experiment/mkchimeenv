@@ -1,7 +1,7 @@
 # Create and Manage CHIME pipeline environments
 
 This package provides the `mkchimeenv` command to manage CHIME pipeline
-environments. On cedar this is probably pre-installed into the `chime/python`
+environments. On Fir this is probably pre-installed into the `chime/python`
 module. If you want to install it yourself (e.g. on your own machine) it can be
 done using `pip` in the usual manner:
 ```
@@ -48,7 +48,7 @@ can sometimes be useful for avoiding conflicts with your existing Python setup.
 
 To speed up the creation you can use the `--fast` option to the create command.
 This will turn off build isolation when pip is installing the packages, which
-will give a large speed boost (especially on cedar), but may be less robust. This option
+will give a large speed boost (especially on Fir), but may be less robust. This option
 generally does not work on macOS.
 
 When using language tools such as Pylance (which is generally enabled by default in
