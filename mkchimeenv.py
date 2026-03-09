@@ -1,18 +1,16 @@
 """Install and manage CHIME pipeline environments."""
 
 from pathlib import Path
+import json
 import sys
-import tempfile
-import toml
+import subprocess
 import venv
 
 import click
 import git
-from packaging.utils import canonicalize_name
-from rich.progress import Progress
-from rich.console import Console
 
-from packaging.requirements import Requirement, InvalidRequirement
+from rich.console import Console
+from rich.progress import Progress
 
 from virtualenvapi.manage import VirtualEnvironment
 
@@ -25,6 +23,11 @@ except PackageNotFoundError:
     pass
 
 del version, PackageNotFoundError
+
+
+# Installing this repo will install all other
+# CHIME packages and dependencies
+MAIN_REPO = "ch_pipeline"
 
 
 def _clone_path(repo, ssh=True):
@@ -67,9 +70,6 @@ private_repositories = {
     "chimedb-config": (_clone_path("chime-experiment/chimedb_config", ssh=True), None),
 }
 
-# List any extra requirements here
-extra_packages = []
-
 
 def match_opcode(opcode: int) -> tuple[int, str, bool]:
     """Match GitPython opcode to a description of the operation.
@@ -104,83 +104,6 @@ def match_opcode(opcode: int) -> tuple[int, str, bool]:
             return (code, msg, done)
     else:
         return (0, "Unknown", done)
-
-
-def find_requirements(path: str) -> list[Requirement]:
-    """Read and structure dependencies in a pyproject.toml file.
-
-    Parameters
-    ----------
-    path
-        Project path
-
-    Returns
-    -------
-    requirements
-        List of parsed Requirement objects
-    """
-    requirements = []
-
-    # Get the project file as a pathlib path
-    file = Path(path) / "pyproject.toml"
-
-    if not file.is_file():
-        raise FileNotFoundError(f"Project file {file} not found.")
-
-    data = toml.load(file)
-    project = data.get("project", {})
-    dependencies = project.get("dependencies", {}).copy()
-
-    for item in dependencies:
-        try:
-            req = Requirement(item)
-        except InvalidRequirement:
-            continue
-
-        requirements.append(req)
-
-    return sorted(requirements, key=lambda x: x.name)
-
-
-def find_optional_requirements(path: str) -> dict:
-    """Read and structure optional dependencies in a pyproject.toml file.
-
-    Parameters
-    ----------
-    path
-        Project path
-
-    Returns
-    -------
-    requirements
-        Dict of parsed Requirement objects
-    """
-    requirements = {}
-
-    # Get the project file
-    file = Path(path) / "pyproject.toml"
-
-    if not file.is_file():
-        raise FileNotFoundError(f"Project file {file} not found.")
-
-    data = toml.load(file)
-    project = data.get("project", {})
-    dependencies = project.get("optional-dependencies", {})
-
-    for item, reqs in dependencies.items():
-        reqlist = []
-        for req in reqs:
-            try:
-                reqlist.append(Requirement(req))
-            except InvalidRequirement:
-                continue
-
-        if item in requirements:
-            requirements[item].extend(reqlist)
-        else:
-            requirements[item] = reqlist
-
-    return requirements
 
 
 class RichProgress(git.RemoteProgress):
@@ -219,6 +142,63 @@ class RichProgress(git.RemoteProgress):
             self.progress.advance(self.overall_task)
 
 
+def install_to_env(
+    env: VirtualEnvironment,
+    pkgstr: str,
+    options: list,
+    console: Console,
+    skip_output: bool = False,
+):
+    """Install a package into a venv.
+
+    Intended to be a more verbose version of `env.install`.
+
+    Parameters
+    ----------
+    env
+        Virtual environment manager.
+    pkgstr
+        Package to install. Supports whatever formats pip supports.
+    options
+        List of options passed to pip via `subprocess.Popen`.
+    console
+        Console handler.
+    skip_output
+        If True, do not display the subprocess stdout or stderr.
+
+    Returns
+    -------
+    CompletedProcess
+        Same output as returned by `subprocess.run`.
+    """
+    proc = subprocess.Popen(
+        [Path(env.path) / "bin" / "pip", "install", pkgstr, *options],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=-1 if skip_output else 1,
+    )
+    if not skip_output:
+        for line in proc.stdout:
+            console.print(line.strip(), soft_wrap=True, highlight=True)
+
+    # Capture output. If output was being printed to the console,
+    # we don't expect anything here
+    stdout, stderr = proc.communicate()
+    proc.wait()
+
+    returncode = proc.poll()
+    if returncode != 0:
+        console.print(
+            f"[bold red] Subprocess failed with return code {returncode}[/bold red]\n\n"
+            f"stdout: {stdout}\n\n"
+            f"stderr: {stderr}"
+        )
+        raise RuntimeError()
+
+    return subprocess.CompletedProcess(proc.args, returncode, stdout, stderr)
+
+
 def labeller(enumerable):
     """For each item in an iterable, also return a string label giving the position."""
 
@@ -234,21 +214,6 @@ def labeller(enumerable):
 def cli():
     """Create and manage CHIME python environments."""
     pass
-
-
-def install_multiple(
-    env: VirtualEnvironment, packages: list[str], options: list[str] | None = None
-):
-    """Install multiple packages into a virtualenvironment at once."""
-
-    # Use a temporary requirements file and then use the usual `env.install`
-    with tempfile.NamedTemporaryFile(mode="w+", delete=False) as tfh:
-        for pkg in packages:
-            tfh.write(f"{pkg}\n")
-
-        tfh.flush()
-
-        env.install(f"-r {tfh.name}", options=options)
 
 
 @cli.command()
@@ -279,13 +244,18 @@ def install_multiple(
 @click.option(
     "--ignore-system-packages/--use-system-packages",
     show_default=True,
-    help="Whether to ignore system site packages when creating the virtualen v.",
+    help="Whether to ignore system site packages when creating the virtualenv.",
 )
 @click.option(
     "--chime-member/--non-chime-member",
     show_default=True,
     default=True,
     help="Whether to include private CHIME repositories.",
+)
+@click.option(
+    "--release",
+    is_flag=True,
+    help="Do not install packages in editable mode.",
 )
 def create(
     path: Path,
@@ -295,6 +265,7 @@ def create(
     download: bool,
     ignore_system_packages: bool,
     chime_member: bool,
+    release: bool,
 ):
     """Install a CHIME pipeline environment at the specified PATH.
 
@@ -304,8 +275,11 @@ def create(
     For this to work you will need to be able to authenticate to Github via ssh. Make
     sure you have your keys set up properly!
     """
-
     console = Console()
+
+    if release and not chime_member:
+        console.print("`Release` build requires access to private CHIME repositories.")
+        sys.exit(1)
 
     # Create the virtual environment
     console.rule("Creating virtualenvironment")
@@ -330,125 +304,118 @@ def create(
             prompt=prompt,
         )
     env = VirtualEnvironment(str(venv_path))
+
     console.print("Upgrading pip")
     env.upgrade("pip")
 
-    # Determine which repositories to close
+    # Fetch the CHIME-specific repositories that can be included
     if chime_member:
         chime_repositories = {**public_repositories(ssh=True), **private_repositories}
     else:
         chime_repositories = public_repositories(ssh=False)
 
-    # Clone the CHIME repos and extract their dependencies
-    console.rule("Cloning CHIME repositories")
+    build_options = ["--no-build-isolation"] if fast else []
 
-    code_path = path / "code"
-    code_path.mkdir()
-
-    requirements = []
-    optional_requirements = {}
-
-    with Progress(
-        *Progress.get_default_columns()[:-1],
-        console=console,
-    ) as progress:
-        for label, (name, (url, target)) in labeller(chime_repositories.items()):
-            clone_path = code_path / name
-
-            git.Repo.clone_from(
-                url,
-                branch=target,
-                to_path=clone_path,
-                progress=RichProgress(f"{label} {name}", progress),
+    # Release build just pip installs the main repository at the main branch
+    if release:
+        console.rule("Creating `Release` CHIME environment")
+        pkgargs = chime_repositories[MAIN_REPO]
+        # name @ github_path, always installs main branch
+        with Progress(
+            *Progress.get_default_columns()[:-1], console=console
+        ) as progress:
+            task = progress.add_task("Installing...", total=None)
+            install_to_env(
+                env, f"{MAIN_REPO} @ git+{pkgargs[0]}", build_options, console
             )
-
-            requirements += find_requirements(clone_path)
-            # Find all the available optional requirements for this repo.
-            # We'll use this to look them up later
-            optional_requirements[name] = find_optional_requirements(clone_path)
-
-    # Find requirements which are optional dependencies of CHIME packages
-    # and add them to the rest of the requirements
-    chime_repo_names = list(chime_repositories.keys())
-
-    for req in requirements.copy():
-        if req.name.replace(".", "-") in chime_repo_names:
-            for extra in req.extras:
-                requirements.extend(optional_requirements[req.name][extra])
-
-    console.rule("Analyzing dependencies...")
-    console.print(f"{len(requirements)} total dependencies.")
-
-    # Remove the specified CHIME packages from the install list
-    requirements = [
-        req
-        for req in requirements
-        if req.name.replace(".", "-") not in chime_repo_names
-    ]
-    console.print(f"{len(requirements)} after removing CHIME pipeline packages.")
-
-    # Also filter out packages that are already installed
-    # NOTE: this uses a private method from virtualenv-api so may be fragile
-    installed_packages = [
-        p.split("==")[0] for p in env._execute_pip(["freeze"]).splitlines()
-    ]
-    requirements = [req for req in requirements if str(req) not in installed_packages]
-    console.print(f"{len(requirements)} after removing already installed packages.")
-
-    # Add the extras to make up for problems parsing
-    requirements += [Requirement(req) for req in extra_packages]
-    console.print(f"{len(requirements)} after adding manual extras.")
-
-    # Group packages together by name to prevent repeated install attempts
-    req_dict = {}
-    for req in sorted(requirements, key=lambda x: x.name):
-        name = canonicalize_name(req.name)
-        if name not in req_dict:
-            req_dict[name] = []
-        req_dict[name].append(req)
-    console.print(f"{len(req_dict)} after removing dupes.")
-
-    # Go through and install all the remaining packages into the virtualenv
-    console.rule("Installing remaining dependencies")
-
-    with Progress(
-        *Progress.get_default_columns()[:-1],
-        console=console,
-    ) as progress:
-        for label, (reqname, reqs) in labeller(req_dict.items()):
-            task = progress.add_task(f"{label} {reqname}", total=None)
-
-            # Request all versions of the same package be installed at once and let pip
-            # figure out what to actually do
-            req_strs = [str(req) for req in reqs]
-            options = ["--no-build-isolation"] if fast else None
-            install_multiple(env, list(set(req_strs)), options=options)
             progress.reset(task, total=1, completed=1)
+    # Editable build clones each chime repo and does an editable install
+    else:
+        console.rule("Creating `Editable` CHIME environment")
 
-    console.rule("Installing CHIME packages")
+        build_options += ["--no-deps"]
 
-    # Install the CHIME packages in editable mode. Don't try to resolve any
-    # dependencies, this should have been done above and so we can install all the CHIME
-    # packages.
-    # NOTE: this could in theory break if they have *build* time dependencies on one
-    # another and they are installed in the wrong order
-    with Progress(
-        *Progress.get_default_columns()[:-1],
-        console=console,
-    ) as progress:
-        for label, chime_package in labeller(chime_repo_names):
-            task = progress.add_task(
-                f"{label} {chime_package}",
-                total=None,
-            )
+        # Clone the CHIME repos and extract their dependencies
+        console.rule("Cloning CHIME repositories")
 
-            options = ["--no-deps"]
-            if fast:
-                options += ["--no-build-isolation"]
-            if compat:
-                options += ["--config-settings", "editable_mode=compat"]
-            env.install(f"-e {code_path / chime_package}", options=options)
-            progress.reset(task, total=1, completed=1)
+        code_path = path / "code"
+        code_path.mkdir()
+
+        with Progress(
+            *Progress.get_default_columns()[:-1], console=console
+        ) as progress:
+            for label, (name, (url, target)) in labeller(chime_repositories.items()):
+                clone_path = code_path / name
+
+                git.Repo.clone_from(
+                    url,
+                    branch=target,
+                    to_path=clone_path,
+                    progress=RichProgress(f"{label} {name}", progress),
+                )
+
+        console.rule("Analyzing dependencies")
+        console.print("This might take a moment...")
+
+        # Get the list of packages to install using a pip dry-run report
+        proc = install_to_env(
+            env,
+            f"{MAIN_REPO} @ git+{chime_repositories[MAIN_REPO][0]}",
+            ["--dry-run", "--report", "-", "--quiet"],
+            console,
+            skip_output=True,
+        )
+
+        report = json.loads(proc.stdout)
+        requirements = []
+
+        # Iterate through all the packages that would be installed
+        for entry in report.get("install", []):
+            meta = entry.get("metadata", {})
+            pkg_name = meta.get("name")
+
+            # Filter chime repos, since these will be installed directly
+            # from the clone
+            if pkg_name.replace(".", "-") not in chime_repositories:
+                if entry.get("is_direct", False):
+                    # package provided via a direct URL
+                    requirements.append(f"{pkg_name}@{meta['url']}")
+                else:
+                    requirements.append(f"{pkg_name}=={meta['version']}")
+
+        # Install all the non-editable dependencies
+        console.rule(f"Installing {len(requirements)} dependencies...")
+
+        with Progress(
+            *Progress.get_default_columns()[:-1],
+            console=console,
+        ) as progress:
+            for label, req in labeller(sorted(requirements, key=str.lower)):
+                task = progress.add_task(f"{label} {req}", total=None)
+
+                env.install(req, options=build_options)
+                progress.reset(task, total=1, completed=1)
+
+        console.rule("Installing CHIME packages")
+        # Install the CHIME packages in editable mode. Don't try to resolve any dependencies,
+        # this should have been done above and so we can install all the CHIME packages.
+        # NOTE: this could in theory break if they have *build* time dependencies on one
+        # another and they are installed in the wrong order, but it would be a pretty
+        # terrible idea to do this
+        with Progress(
+            *Progress.get_default_columns()[:-1], console=console
+        ) as progress:
+            for label, chime_package in labeller(chime_repositories.keys()):
+                task = progress.add_task(f"{label} {chime_package}", total=None)
+
+                options = [
+                    *build_options,
+                ]
+                if compat:
+                    options += ["--config-settings", "editable_mode=compat"]
+
+                env.install(f"-e {code_path / chime_package}", options=options)
+                progress.reset(task, total=1, completed=1)
 
     if download:
         console.rule("Downloading skyfield ephemeris data")
