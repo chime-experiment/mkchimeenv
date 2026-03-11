@@ -23,8 +23,6 @@ dependencies = [
     "virtualenv-api",
     "GitPython",
     "rich",
-    "toml",
-    "packaging",
     "click >= 8.0",
 ]
 classifiers = [
