@@ -45,6 +45,7 @@ def public_repositories(ssh=True):
         "driftscan": (_clone_path("radiocosmology/driftscan", ssh=ssh), None),
         "draco": (_clone_path("radiocosmology/draco", ssh=ssh), None),
         "fluxcat": (_clone_path("radiocosmology/fluxcat", ssh=ssh), None),
+        "wyvern": (_clone_path("radiocosmology/wyvern", ssh=ssh), None),
         # chimedb core code and extensions
         "chimedb": (_clone_path("chime-experiment/chimedb", ssh=ssh), None),
         "chimedb-data_index": (
