@@ -1,20 +1,17 @@
 """Install and manage CHIME pipeline environments."""
 
-from pathlib import Path
 import json
-import sys
 import subprocess
+import sys
 import venv
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
 import click
 import git
-
 from rich.console import Console
 from rich.progress import Progress
-
 from virtualenvapi.manage import VirtualEnvironment
-
-from importlib.metadata import PackageNotFoundError, version
 
 try:
     __version__ = version("mkchimeenv")
@@ -103,8 +100,8 @@ def match_opcode(opcode: int) -> tuple[int, str, bool]:
     for code, msg in codes:
         if opcode & code != 0:
             return (code, msg, done)
-    else:
-        return (0, "Unknown", done)
+
+    return (0, "Unknown", done)
 
 
 class RichProgress(git.RemoteProgress):
@@ -214,7 +211,6 @@ def labeller(enumerable):
 @click.version_option(__version__)
 def cli():
     """Create and manage CHIME python environments."""
-    pass
 
 
 @cli.command()
@@ -285,10 +281,10 @@ def create(
     # Create the virtual environment
     console.rule("Creating virtualenvironment")
     if not path.exists():
-        console.print(f"Specified path={str(path)} does not exist. Creating...")
+        console.print(f"Specified path={path!s} does not exist. Creating...")
         path.mkdir()
     elif not path.is_dir():
-        console.print(f"Specified path={str(path)} exists, but is not a directory.")
+        console.print(f"Specified path={path!s} exists, but is not a directory.")
         sys.exit(1)
 
     venv_path = path / "venv"
@@ -428,7 +424,7 @@ def create(
                     "from caput.astro.skyfield import skyfield_wrapper as s; s.timescale; s.ephemeris",
                 ]
             )
-        except Exception as e:
+        except Exception as e:  # noqa BLE001
             console.print(f"Failed to download skyfield data. Error: {e}")
 
 
