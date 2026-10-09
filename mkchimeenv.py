@@ -37,35 +37,51 @@ def _clone_path(repo, ssh=True):
 def public_repositories(ssh=True):
     return {
         # radio cosmology packages
-        "caput": (_clone_path("radiocosmology/caput", ssh=ssh), None),
-        "cora": (_clone_path("radiocosmology/cora", ssh=ssh), None),
-        "driftscan": (_clone_path("radiocosmology/driftscan", ssh=ssh), None),
-        "draco": (_clone_path("radiocosmology/draco", ssh=ssh), None),
-        "fluxcat": (_clone_path("radiocosmology/fluxcat", ssh=ssh), None),
-        "wyvern": (_clone_path("radiocosmology/wyvern", ssh=ssh), None),
+        # format: (github path, branch, project subdirectory)
+        "caput": (_clone_path("radiocosmology/caput", ssh=ssh), None, None),
+        "cora": (_clone_path("radiocosmology/cora", ssh=ssh), None, None),
+        "driftscan": (_clone_path("radiocosmology/driftscan", ssh=ssh), None, None),
+        "draco": (_clone_path("radiocosmology/draco", ssh=ssh), None, None),
+        "fluxcat": (_clone_path("radiocosmology/fluxcat", ssh=ssh), None, None),
+        "wyvern": (
+            _clone_path("radiocosmology/wyvern", ssh=ssh),
+            None,
+            "bindings/python",
+        ),
         # chimedb core code and extensions
-        "chimedb": (_clone_path("chime-experiment/chimedb", ssh=ssh), None),
+        "chimedb": (_clone_path("chime-experiment/chimedb", ssh=ssh), None, None),
         "chimedb-data_index": (
             _clone_path("chime-experiment/chimedb_di", ssh=ssh),
+            None,
             None,
         ),
         "chimedb-dataflag": (
             _clone_path("chime-experiment/chimedb_dataflag", ssh=ssh),
             None,
+            None,
         ),
         "chimedb-dataset": (
             _clone_path("chime-experiment/chimedb_dataset", ssh=ssh),
             None,
+            None,
         ),
         # chime specific repositories
-        "ch_ephem": (_clone_path("chime-experiment/ch_ephem", ssh=ssh), None),
-        "ch_util": (_clone_path("chime-experiment/ch_util", ssh=ssh), None),
-        "ch_pipeline": (_clone_path("chime-experiment/ch_pipeline", ssh=ssh), None),
+        "ch_ephem": (_clone_path("chime-experiment/ch_ephem", ssh=ssh), None, None),
+        "ch_util": (_clone_path("chime-experiment/ch_util", ssh=ssh), None, None),
+        "ch_pipeline": (
+            _clone_path("chime-experiment/ch_pipeline", ssh=ssh),
+            None,
+            None,
+        ),
     }
 
 
 private_repositories = {
-    "chimedb-config": (_clone_path("chime-experiment/chimedb_config", ssh=True), None),
+    "chimedb-config": (
+        _clone_path("chime-experiment/chimedb_config", ssh=True),
+        None,
+        None,
+    ),
 }
 
 
@@ -341,7 +357,7 @@ def create(
         with Progress(
             *Progress.get_default_columns()[:-1], console=console
         ) as progress:
-            for label, (name, (url, target)) in labeller(chime_repositories.items()):
+            for label, (name, (url, target, _)) in labeller(chime_repositories.items()):
                 clone_path = code_path / name
 
                 git.Repo.clone_from(
@@ -402,7 +418,9 @@ def create(
         with Progress(
             *Progress.get_default_columns()[:-1], console=console
         ) as progress:
-            for label, chime_package in labeller(chime_repositories.keys()):
+            for label, (chime_package, (_, _, project_dir)) in labeller(
+                chime_repositories.items()
+            ):
                 task = progress.add_task(f"{label} {chime_package}", total=None)
 
                 options = [
@@ -411,7 +429,12 @@ def create(
                 if compat:
                     options += ["--config-settings", "editable_mode=compat"]
 
-                env.install(f"-e {code_path / chime_package}", options=options)
+                project_path = code_path / chime_package
+
+                if project_dir is not None:
+                    project_path = project_path / project_dir
+
+                env.install(f"-e {project_path}", options=options)
                 progress.reset(task, total=1, completed=1)
 
     if download:
