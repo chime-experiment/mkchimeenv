@@ -1,6 +1,7 @@
 """Install and manage CHIME pipeline environments."""
 
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -12,6 +13,8 @@ import click
 import git
 from rich.console import Console
 from rich.progress import Progress
+from rich.table import Table
+from rich.text import Text
 from virtualenvapi.manage import VirtualEnvironment
 
 try:
@@ -157,6 +160,19 @@ class RichProgress(git.RemoteProgress):
             self.progress.advance(self.overall_task)
 
 
+class VirtualEnv(VirtualEnvironment):
+    """Fix name parsing for install packages."""
+
+    @property
+    def installed_package_names(self):
+        names = []
+        for name, _ in self.installed_packages:
+            name = re.split(r"\s*@\s*|==", name, maxsplit=1)[0]
+            names.append(name.strip().lower())
+
+        return names
+
+
 def _drain_stream(stream, lines, callback):
     for line in stream:
         lines.append(line)
@@ -168,7 +184,7 @@ def _drain_stream(stream, lines, callback):
 
 
 def install_to_env(
-    env: VirtualEnvironment,
+    env: VirtualEnv,
     pkgstr: str,
     options: list,
     console: Console,
@@ -353,7 +369,7 @@ def create(
             with_pip=True,
             prompt=prompt,
         )
-    env = VirtualEnvironment(str(venv_path))
+    env = VirtualEnv(str(venv_path))
 
     console.print("Upgrading pip")
     env.upgrade("pip")
@@ -379,6 +395,37 @@ def create(
                 env, f"{MAIN_REPO} @ git+{pkgargs[0]}", build_options, console
             )
             progress.reset(task, total=1, completed=1)
+
+        console.rule("Checking for missing packages")
+        missing = []
+        grid = Table.grid(padding=(0, 1))
+        grid.add_column()  # names
+        grid.add_column()  # status
+
+        for name, (url, _, sub_dir) in chime_repositories.items():
+            if not (env.is_installed(name) or env.is_installed(name.replace("-", "."))):
+                if sub_dir is not None:
+                    url = str(url) + f"#subdirectory={sub_dir}"
+                missing.append((name, url))
+                status = Text("Not Found", style="red")
+            else:
+                status = Text("Found", style="green")
+
+            grid.add_row(Text(f"{name}:"), status)
+
+        console.print(grid)
+
+        if missing:
+            console.rule("Installing missing packages")
+            with Progress(
+                *Progress.get_default_columns()[:-1], console=console
+            ) as progress:
+                for name, url in missing:
+                    task = progress.add_task(f"Installing {name}", total=None)
+
+                    env.install(f"{name} @ git+{url}", options=build_options)
+                    progress.reset(task, total=1, completed=1)
+
     # Editable build clones each chime repo and does an editable install
     else:
         console.rule("Creating `Editable` CHIME environment")
