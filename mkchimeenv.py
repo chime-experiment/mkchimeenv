@@ -12,7 +12,7 @@ from pathlib import Path
 import click
 import git
 from rich.console import Console
-from rich.progress import Progress
+from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from rich.text import Text
 from virtualenvapi.manage import VirtualEnvironment
@@ -29,6 +29,7 @@ del version, PackageNotFoundError
 # Installing this repo will install all other
 # CHIME packages and dependencies
 MAIN_REPO = "ch_pipeline"
+REMOTE = "origin"
 
 
 def _clone_path(repo, ssh=True):
@@ -535,11 +536,165 @@ def create(
             console.print(f"Failed to download skyfield data. Error: {e}")
 
 
+def find_main_branch(repo: git.Repo):
+    """Prefer origin/HEAD, fall back to main, then master."""
+    try:
+        ref = repo.git.symbolic_ref(f"refs/remotes/{REMOTE}/HEAD")
+        return ref.rsplit("/", 1)[-1]
+    except git.GitCommandError:
+        pass
+    remote_refs = {r.remote_head for r in repo.remotes[REMOTE].refs}
+    for name in ("main", "master"):
+        if name in remote_refs:
+            return name
+    return None
+
+
+def has_upstream(repo: git.Repo, branch: str):
+    """Check if a branch has a remote."""
+    try:
+        return repo.git.rev_parse("--abbrev-ref", f"{branch}@{{upstream}}") != ""
+    except git.GitCommandError:
+        return False
+
+
+def update_single_repo(repo: git.Repo) -> tuple[bool | None, str]:
+    """Update a single repository.
+
+    Returns
+    -------
+    tuple(bool | None, str):
+        - True if repo was updated
+        - False if update was skipped
+        - None is no updates available
+        Includes a relevant message
+    """
+    # Various repo status checks
+    if repo.head.is_detached:
+        return (False, "detached HEAD")
+
+    if REMOTE not in {r.name for r in repo.remotes}:
+        return (False, f"no remote: {REMOTE}")
+
+    branch = repo.active_branch.name
+    main = find_main_branch(repo)
+
+    if branch == main and repo.is_dirty(untracked_files=True):
+        return (
+            False,
+            f"on '{REMOTE} with uncommitted changes! Move them to a new branch.'",
+        )
+
+    initial_hash = repo.head.commit.hexsha
+
+    # Run git fetch for upstream changes
+    try:
+        repo.git.fetch(REMOTE)
+    except git.GitCommandError as exc:
+        return (False, f"fetch failed: {exc.stderr.strip()}")
+
+    # (a) pull remote changes for the current branch (merge)
+    if has_upstream(repo, branch):
+        try:
+            repo.git.pull("--no-rebase", "--autostash", REMOTE, branch)
+        except git.GitCommandError as e:
+            try:
+                repo.git.merge("--abort")
+            except git.GitCommandError:
+                pass
+            return (
+                False,
+                f"CONFLICT merging {REMOTE}/{branch}: {e.stderr.strip() or e.stdout.strip()}",
+            )
+
+    if branch != main:
+        try:
+            repo.git.rebase("--autostash", f"{REMOTE}/{main}")
+        except git.GitCommandError as exc:
+            try:
+                repo.git.rebase("--abort")
+            except git.GitCommandError:
+                pass
+            return (
+                False,
+                f"CONFLICT rebasing {branch} onto {REMOTE}/{main}: {exc.stderr.strip() or exc.stdout.strip()}",
+            )
+    else:
+        try:
+            repo.git.merge("--ff-only", f"{REMOTE}/{main}")
+        except git.GitCommandError as exc:
+            return (False, f"cannot fast-forward {main}: {exc.stderr.strip()}")
+
+    end_hash = repo.head.commit.hexsha
+
+    return (
+        True if initial_hash != end_hash else None
+    ), f"branch={branch} (main={main})"
+
+
+STATUS_MAP = {
+    True: ("green", "Updated"),
+    False: ("red", "Update failed"),
+    None: ("blue", "Nothing to update"),
+}
+
+
 @cli.command()
 @click.argument("path", type=click.Path(resolve_path=True, path_type=Path))
 def update(path):
-    """Update all the packages in the virtualenvironment at PATH.
+    """Update all the packages in the virtualenvironment at PATH."""
+    console = Console()
 
-    Not yet implemented.
-    """
-    raise NotImplementedError()
+    code_path = path / "code"
+    venv_path = path / "venv"
+
+    if not code_path.exists():
+        console.print(
+            "No code path found - can't update an env installed as `release`!"
+        )
+        sys.exit(1)
+
+    if not venv_path.exists():
+        console.print("`venv` path not found - check that this is a valid environment!")
+        sys.exit(1)
+
+    env = VirtualEnv(str(venv_path))
+
+    console.print("Upgrading pip")
+    env.upgrade("pip")
+
+    # Iterate through repos and fetch any recent git changes
+    console.rule("Finding remote updates...")
+    updated = []
+    repos_to_update = []
+
+    for d in sorted(x for x in code_path.iterdir() if x.is_dir()):
+        try:
+            repo = git.Repo(d)
+        except git.InvalidGitRepositoryError:
+            continue
+
+        repos_to_update.append((repo, d))
+
+    with Progress(
+        SpinnerColumn(finished_text=" "),
+        TextColumn("{task.description}"),
+        console=console,
+    ) as progress:
+        for label, (repo, d) in labeller(repos_to_update):
+            task = progress.add_task(f"{label} {d.name!s}", total=len(repos_to_update))
+
+            result, message = update_single_repo(repo)
+
+            if result:
+                # TODO: handle dependency changes
+                updated.append(repo)
+
+            style, status = STATUS_MAP[result]
+
+            progress.update(
+                task,
+                description=f"[{style}]{status}[/] [bold]{d.name!s}[/]: {message}",
+                total=1,
+                completed=1,
+            )
