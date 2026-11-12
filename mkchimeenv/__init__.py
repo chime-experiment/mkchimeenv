@@ -1,10 +1,7 @@
 """Install and manage CHIME pipeline environments."""
 
 import json
-import re
-import subprocess
 import sys
-import threading
 import venv
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -15,7 +12,10 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from rich.text import Text
-from virtualenvapi.manage import VirtualEnvironment
+
+from .gitutils import RichProgress, update_single_repo
+from .repos import private_repositories, public_repositories
+from .venvutils import VirtualEnv, install_to_env
 
 try:
     __version__ = version("mkchimeenv")
@@ -26,255 +26,8 @@ except PackageNotFoundError:
 del version, PackageNotFoundError
 
 
-# Installing this repo will install all other
-# CHIME packages and dependencies
+# Installing this repo will install all other CHIME packages and dependencies
 MAIN_REPO = "ch_pipeline"
-REMOTE = "origin"
-
-
-def _clone_path(repo, ssh=True):
-    if ssh:
-        return f"ssh://git@github.com/{repo}"
-    else:
-        return f"https://github.com/{repo}.git"
-
-
-def public_repositories(ssh=True):
-    return {
-        # radio cosmology packages
-        # format: (github path, branch, project subdirectory)
-        "caput": (_clone_path("radiocosmology/caput", ssh=ssh), None, None),
-        "cora": (_clone_path("radiocosmology/cora", ssh=ssh), None, None),
-        "driftscan": (_clone_path("radiocosmology/driftscan", ssh=ssh), None, None),
-        "draco": (_clone_path("radiocosmology/draco", ssh=ssh), None, None),
-        "fluxcat": (_clone_path("radiocosmology/fluxcat", ssh=ssh), None, None),
-        "wyvern": (
-            _clone_path("radiocosmology/wyvern", ssh=ssh),
-            None,
-            "bindings/python",
-        ),
-        # chimedb core code and extensions
-        "chimedb": (_clone_path("chime-experiment/chimedb", ssh=ssh), None, None),
-        "chimedb-data_index": (
-            _clone_path("chime-experiment/chimedb_di", ssh=ssh),
-            None,
-            None,
-        ),
-        "chimedb-dataflag": (
-            _clone_path("chime-experiment/chimedb_dataflag", ssh=ssh),
-            None,
-            None,
-        ),
-        "chimedb-dataset": (
-            _clone_path("chime-experiment/chimedb_dataset", ssh=ssh),
-            None,
-            None,
-        ),
-        # chime specific repositories
-        "ch_ephem": (_clone_path("chime-experiment/ch_ephem", ssh=ssh), None, None),
-        "ch_util": (_clone_path("chime-experiment/ch_util", ssh=ssh), None, None),
-        "ch_pipeline": (
-            _clone_path("chime-experiment/ch_pipeline", ssh=ssh),
-            None,
-            None,
-        ),
-    }
-
-
-private_repositories = {
-    "chimedb-config": (
-        _clone_path("chime-experiment/chimedb_config", ssh=True),
-        None,
-        None,
-    ),
-}
-
-
-def match_opcode(opcode: int) -> tuple[int, str, bool]:
-    """Match GitPython opcode to a description of the operation.
-
-    Parameters
-    ----------
-    opcode
-        GitPython opcode.
-
-    Returns
-    -------
-    code
-        Code for the actual operation being performed. This differs from the opcode as
-        the input opcode may contain extra information.
-    msg
-        Text description of operation.
-    done
-        Has the operation just finished.
-    """
-
-    codes = (
-        (git.RemoteProgress.COUNTING, "Counting (remote)"),
-        (git.RemoteProgress.COMPRESSING, "Compressing (remote)"),
-        (git.RemoteProgress.RECEIVING, "Receiving"),
-        (git.RemoteProgress.RESOLVING, "Resolving"),
-    )
-
-    done = (opcode & git.RemoteProgress.END) != 0
-
-    for code, msg in codes:
-        if opcode & code != 0:
-            return (code, msg, done)
-
-    return (0, "Unknown", done)
-
-
-class RichProgress(git.RemoteProgress):
-    """Use `rich` to show the progress of a GitPython operation.
-
-    This shows two bars, one for the overall operation progress, just indicating at
-    which stage the process is and a second for the progress of the current operation
-    (which is more easily metered)
-
-    Parameters
-    ----------
-    label
-        A string label to use on the progress bar.
-    progress
-        The Progress instance to add the meters too.
-    """
-
-    def __init__(self, label: str, progress: Progress):
-        super().__init__()
-
-        self.progress = progress
-        self.overall_task = progress.add_task(f"{label}", total=4)
-
-        self.tasks: dict[int, int] = {}
-
-    def update(self, op_code, cur_count, max_count=None, message=""):
-        code, msg, done = match_opcode(op_code)
-
-        if code not in self.tasks:
-            self.tasks[code] = self.progress.add_task(msg, total=max_count)
-
-        task = self.tasks[code]
-        self.progress.update(task, completed=cur_count, visible=(not done))
-
-        if done:
-            self.progress.advance(self.overall_task)
-
-
-class VirtualEnv(VirtualEnvironment):
-    """Fix name parsing for install packages."""
-
-    @property
-    def installed_package_names(self):
-        names = []
-        for name, _ in self.installed_packages:
-            name = re.split(r"\s*@\s*|==", name, maxsplit=1)[0]
-            names.append(name.strip().lower())
-
-        return names
-
-
-def _drain_stream(stream, lines, callback):
-    for line in stream:
-        lines.append(line)
-
-        if callback:
-            callback(line.rstrip())
-
-    stream.close()
-
-
-def install_to_env(
-    env: VirtualEnv,
-    pkgstr: str,
-    options: list,
-    console: Console,
-    skip_output: bool = False,
-):
-    """Install a package into a venv.
-
-    Intended to be a more verbose version of `env.install`.
-
-    Parameters
-    ----------
-    env
-        Virtual environment manager.
-    pkgstr
-        Package to install. Supports whatever formats pip supports.
-    options
-        List of options passed to pip via `subprocess.Popen`.
-    console
-        Console handler.
-    skip_output
-        If True, do not display the subprocess stdout or stderr.
-
-    Returns
-    -------
-    CompletedProcess
-        Same output as returned by `subprocess.run`.
-    """
-    proc = subprocess.Popen(
-        [Path(env.path) / "bin" / "pip", "install", pkgstr, *options],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
-
-    # Ensure that we don't block `stderr` while printing `stdout`
-    output_lines = []
-    error_lines = []
-
-    output_callback = (
-        None
-        if skip_output
-        else lambda s: console.print(s, soft_wrap=True, highlight=True)
-    )
-    error_callback = (
-        None if skip_output else lambda s: console.print(s, soft_wrap=True, style="red")
-    )
-
-    # drain in separate threads. This lets us separate outputs while
-    # ensuring we never hit a deadlock, in the case where we want to
-    # write console output in real time
-    threads = [
-        threading.Thread(
-            target=_drain_stream, args=(proc.stdout, output_lines, output_callback)
-        ),
-        threading.Thread(
-            target=_drain_stream, args=(proc.stderr, error_lines, error_callback)
-        ),
-    ]
-    # run threads to completion
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-
-    returncode = proc.wait()
-
-    stdout = "".join(output_lines)
-    stderr = "".join(error_lines)
-
-    if returncode != 0:
-        console.print(
-            f"[bold red] Subprocess failed with return code {proc.returncode}[/bold red]\n\n"
-            f"stdout: {stdout}\n\n"
-            f"stderr: {stderr}"
-        )
-        raise RuntimeError()
-
-    return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
-
-
-def labeller(enumerable):
-    """For each item in an iterable, also return a string label giving the position."""
-
-    total = len(enumerable)
-
-    for ii, item in enumerate(enumerable):
-        label = f"[{ii + 1:{len(str(total))}d}/{total:d}]"
-        yield label, item
 
 
 @click.group()
@@ -536,102 +289,6 @@ def create(
             console.print(f"Failed to download skyfield data. Error: {e}")
 
 
-def find_main_branch(repo: git.Repo):
-    """Prefer origin/HEAD, fall back to main, then master."""
-    try:
-        ref = repo.git.symbolic_ref(f"refs/remotes/{REMOTE}/HEAD")
-        return ref.rsplit("/", 1)[-1]
-    except git.GitCommandError:
-        pass
-    remote_refs = {r.remote_head for r in repo.remotes[REMOTE].refs}
-    for name in ("main", "master"):
-        if name in remote_refs:
-            return name
-    return None
-
-
-def has_upstream(repo: git.Repo, branch: str):
-    """Check if a branch has a remote."""
-    try:
-        return repo.git.rev_parse("--abbrev-ref", f"{branch}@{{upstream}}") != ""
-    except git.GitCommandError:
-        return False
-
-
-def update_single_repo(repo: git.Repo) -> tuple[bool | None, str]:
-    """Update a single repository.
-
-    Returns
-    -------
-    tuple(bool | None, str):
-        - True if repo was updated
-        - False if update was skipped
-        - None is no updates available
-        Includes a relevant message
-    """
-    # Various repo status checks
-    if repo.head.is_detached:
-        return (False, "detached HEAD")
-
-    if REMOTE not in {r.name for r in repo.remotes}:
-        return (False, f"no remote: {REMOTE}")
-
-    branch = repo.active_branch.name
-    main = find_main_branch(repo)
-
-    if branch == main and repo.is_dirty(untracked_files=True):
-        return (
-            False,
-            f"on '{REMOTE} with uncommitted changes! Move them to a new branch.'",
-        )
-
-    initial_hash = repo.head.commit.hexsha
-
-    # Run git fetch for upstream changes
-    try:
-        repo.git.fetch(REMOTE)
-    except git.GitCommandError as exc:
-        return (False, f"fetch failed: {exc.stderr.strip()}")
-
-    # (a) pull remote changes for the current branch (merge)
-    if has_upstream(repo, branch):
-        try:
-            repo.git.pull("--no-rebase", "--autostash", REMOTE, branch)
-        except git.GitCommandError as e:
-            try:
-                repo.git.merge("--abort")
-            except git.GitCommandError:
-                pass
-            return (
-                False,
-                f"CONFLICT merging {REMOTE}/{branch}: {e.stderr.strip() or e.stdout.strip()}",
-            )
-
-    if branch != main:
-        try:
-            repo.git.rebase("--autostash", f"{REMOTE}/{main}")
-        except git.GitCommandError as exc:
-            try:
-                repo.git.rebase("--abort")
-            except git.GitCommandError:
-                pass
-            return (
-                False,
-                f"CONFLICT rebasing {branch} onto {REMOTE}/{main}: {exc.stderr.strip() or exc.stdout.strip()}",
-            )
-    else:
-        try:
-            repo.git.merge("--ff-only", f"{REMOTE}/{main}")
-        except git.GitCommandError as exc:
-            return (False, f"cannot fast-forward {main}: {exc.stderr.strip()}")
-
-    end_hash = repo.head.commit.hexsha
-
-    return (
-        True if initial_hash != end_hash else None
-    ), f"branch={branch} (main={main})"
-
-
 STATUS_MAP = {
     True: ("green", "Updated"),
     False: ("red", "Update failed"),
@@ -664,8 +321,9 @@ def update(path):
     env.upgrade("pip")
 
     # Iterate through repos and fetch any recent git changes
-    console.rule("Finding remote updates...")
+    console.rule("Fetching remote updates")
     updated = []
+    failed = []
     repos_to_update = []
 
     for d in sorted(x for x in code_path.iterdir() if x.is_dir()):
@@ -689,6 +347,8 @@ def update(path):
             if result:
                 # TODO: handle dependency changes
                 updated.append(repo)
+            elif result is False:
+                failed.append(repo)
 
             style, status = STATUS_MAP[result]
 
@@ -698,3 +358,13 @@ def update(path):
                 total=1,
                 completed=1,
             )
+
+
+def labeller(enumerable):
+    """For each item in an iterable, also return a string label giving the position."""
+
+    total = len(enumerable)
+
+    for ii, item in enumerate(enumerable):
+        label = f"[{ii + 1:{len(str(total))}d}/{total:d}]"
+        yield label, item
