@@ -14,7 +14,7 @@ from rich.text import Text
 
 from .gitutils import RichProgress, update_single_repo
 from .repos import private_repositories, public_repositories
-from .venvutils import VirtualEnv, install_to_env, resolve_dependencies
+from .venvutils import VirtualEnv, resolve_dependencies, uv_pip_command
 
 try:
     __version__ = version("mkchimeenv")
@@ -76,6 +76,11 @@ def cli():
     is_flag=True,
     help="Do not install packages in editable mode.",
 )
+@click.option(
+    "--debug-install",
+    is_flag=True,
+    help="Display all output text during install",
+)
 def create(
     path: Path,
     prompt: str,
@@ -85,6 +90,7 @@ def create(
     ignore_system_packages: bool,
     chime_member: bool,
     release: bool,
+    debug_install: bool,
 ):
     """Install a CHIME pipeline environment at the specified PATH.
 
@@ -144,7 +150,7 @@ def create(
             *Progress.get_default_columns()[:-1], console=console
         ) as progress:
             task = progress.add_task("Installing...", total=None)
-            install_to_env(
+            uv_pip_command(
                 env, f"{MAIN_REPO} @ git+{pkgargs[0]}", build_options, console
             )
             progress.reset(task, total=1, completed=1)
@@ -209,10 +215,11 @@ def create(
 
         # Get the list of packages to install using a pip dry-run report
         requirements = resolve_dependencies(
-            f"{MAIN_REPO} @ git+{chime_repositories[MAIN_REPO][0]}",
+            str(code_path / MAIN_REPO / "pyproject.toml"),
             env,
             console,
             list(chime_repositories.keys()),
+            skip_output=not debug_install,
         )
 
         # Install all the non-editable dependencies
@@ -242,9 +249,7 @@ def create(
             ):
                 task = progress.add_task(f"{label} {chime_package}", total=None)
 
-                options = [
-                    *build_options,
-                ]
+                options = [*build_options]
                 if compat:
                     options += ["--config-settings", "editable_mode=compat"]
 
@@ -279,7 +284,12 @@ STATUS_MAP = {
 
 @cli.command()
 @click.argument("path", type=click.Path(resolve_path=True, path_type=Path))
-def update(path):
+@click.option(
+    "--debug-install",
+    is_flag=True,
+    help="Display all output text during install",
+)
+def update(path, debug_install):
     """Update all the packages in the virtualenvironment at PATH."""
     console = Console()
 
@@ -343,7 +353,7 @@ def update(path):
     # Get the list of cloned packages and check each one for updates
     chime_repositories = {**public_repositories(ssh=True), **private_repositories}
     # Resolve repos that exist and project paths
-    updated_dependencies = []
+    updated_dependencies = set()
 
     with Progress(*Progress.get_default_columns()[:-1], console=console) as progress:
         for label, (name, (_, _, sub_dir)) in labeller(chime_repositories.items()):
@@ -354,25 +364,20 @@ def update(path):
 
             if package_path.exists():
                 task = progress.add_task(f"{label} {package_path.name}", total=None)
-                updated_dependencies.extend(
+                updated_dependencies.update(
                     resolve_dependencies(
-                        str(package_path),
+                        str(package_path / "pyproject.toml"),
                         env,
                         console,
                         list(chime_repositories.keys()),
+                        skip_output=not debug_install,
                     )
                 )
                 progress.reset(task, total=1, completed=1)
 
     if updated_dependencies:
-        # This should now only contain a set of external dependencies
-        console.rule("Finding external dependencies...")
-        updated_dependencies = resolve_dependencies(
-            updated_dependencies,
-            env,
-            console,
-            list(chime_repositories.keys()),
-        )
+        console.print(f"Found {len(updated_dependencies)} dependencies to update.")
+        console.rule("Installing updated dependencies...")
 
         with Progress(
             *Progress.get_default_columns()[:-1],

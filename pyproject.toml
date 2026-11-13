@@ -17,13 +17,14 @@ maintainers = [
 ]
 license = {file = "LICENSE"}
 dynamic = ["version", "readme"]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "virtualenv",
     "virtualenv-api",
     "GitPython",
     "rich",
     "click >= 8.0",
+    "uv",
 ]
 classifiers = [
     "License :: OSI Approved :: MIT License",
@@ -45,4 +46,4 @@ readme = { file = ["README.md"], content-type = "text/markdown" }
 enabled = true
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"

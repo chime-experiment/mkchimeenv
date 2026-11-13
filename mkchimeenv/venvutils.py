@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import threading
+import tomllib
 from pathlib import Path
 
 from rich.console import Console
@@ -34,14 +35,15 @@ def _drain_stream(stream, lines, callback):
     stream.close()
 
 
-def install_to_env(
+def uv_pip_command(
     env: VirtualEnv,
     pkgstr: str | list[str],
     options: list,
     console: Console,
+    uv_command: str = "install",
     skip_output: bool = False,
 ):
-    """Install a package into a venv.
+    """Run a pip command in a venv.
 
     Intended to be a more verbose version of `env.install`.
 
@@ -67,7 +69,15 @@ def install_to_env(
         pkgstr = [pkgstr]
 
     proc = subprocess.Popen(
-        [Path(env.path) / "bin" / "pip", "install", *map(str, pkgstr), *options],
+        [
+            "uv",
+            "pip",
+            uv_command,
+            "--python",
+            Path(env.path) / "bin" / "python",
+            *map(str, pkgstr),
+            *options,
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -122,37 +132,76 @@ def install_to_env(
 
 def resolve_dependencies(
     package: str | list[str],
-    venv: VirtualEnv,
+    env: VirtualEnv,
     console: Console,
     ignore_deps: list | None = None,
+    skip_output: bool = False,
 ):
-    """Return a list of pip-installable dependencies, excluding those in `ignore_deps`."""
-    # Get the list of packages to install using a pip dry-run report
-    proc = install_to_env(
-        venv,
-        package,
-        ["--dry-run", "--report", "-", "--quiet"],
-        console,
-        skip_output=True,
-    )
+    if isinstance(package, str):
+        package = [package]
 
-    report = json.loads(proc.stdout)
-    requirements = []
-
-    if not ignore_deps:
+    if ignore_deps is None:
         ignore_deps = []
 
-    # Iterate through all the packages that would be installed
-    for entry in report.get("install", []):
-        meta = entry.get("metadata", {})
-        pkg_name = meta.get("name")
-        # Filter chime repos, since these will be installed directly
-        # from the clone
-        if pkg_name.replace(".", "-") not in ignore_deps:
-            if entry.get("is_direct", False):
-                # package provided via a direct URL
-                requirements.append(f"{pkg_name}@{meta['url']}")
-            else:
-                requirements.append(f"{pkg_name}=={meta['version']}")
+    desired = uv_pip_command(
+        env,
+        package,
+        ["--no-header", "--no-annotate", "--quiet", "--format", "pylock.toml"],
+        console,
+        uv_command="compile",
+        skip_output=skip_output,
+    )
+
+    wants = tomllib.loads(desired.stdout)
+
+    state = uv_pip_command(
+        env,
+        [],
+        ["--format", "json"],
+        console,
+        uv_command="list",
+        skip_output=skip_output,
+    )
+
+    has_list = json.loads(state.stdout)
+
+    # convert `has` from a list to a dict for easier
+    # membership lookup
+    has = {entry["name"]: entry for entry in has_list}
+
+    # make sure that possible variants of the dependency names
+    # are handled
+    ignore_variants = set(ignore_deps)
+    for pkg in ignore_deps:
+        ignore_variants.add(pkg.replace("-", "_"))
+        ignore_variants.add(pkg.replace("_", "-"))
+
+    requirements = []
+
+    for entry in wants.get("packages", []):
+        wants_name = entry["name"]
+        wants_version = entry["version"]
+
+        if wants_name in ignore_variants:
+            continue
+
+        has_meta = has.get(wants_name, {})
+
+        if has_meta.get("version") == wants_version:
+            # already exists
+            continue
+
+        if "editable_project_location" in has_meta:
+            # don't want to overwrite editable installs
+            continue
+
+        # By this point, we want to install the package listed in
+        # `wants`, so figure out the package string
+        if "vcs" in entry:
+            package_string = f"{wants_name}@{entry['vcs']['url']}"
+        else:
+            package_string = f"{wants_name}=={wants_version}"
+
+        requirements.append(package_string)
 
     return requirements
