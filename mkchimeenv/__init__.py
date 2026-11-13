@@ -182,7 +182,13 @@ def create(
                 for name, url in missing:
                     task = progress.add_task(f"Installing {name}", total=None)
 
-                    env.install(f"{name} @ git+{url}", options=build_options)
+                    uv_pip_command(
+                        env,
+                        f"{name} @ git+{url}",
+                        build_options,
+                        console,
+                        skip_output=not debug_install,
+                    )
                     progress.reset(task, total=1, completed=1)
 
     # Editable build clones each chime repo and does an editable install
@@ -232,7 +238,9 @@ def create(
             for label, req in labeller(sorted(requirements, key=str.lower)):
                 task = progress.add_task(f"{label} {req}", total=None)
 
-                env.install(req, options=build_options)
+                uv_pip_command(
+                    env, req, build_options, console, skip_output=not debug_install
+                )
                 progress.reset(task, total=1, completed=1)
 
         console.rule("Installing CHIME packages")
@@ -258,7 +266,13 @@ def create(
                 if project_dir is not None:
                     project_path = project_path / project_dir
 
-                env.install(f"-e {project_path}", options=options)
+                uv_pip_command(
+                    env,
+                    f"-e {project_path}",
+                    options,
+                    console,
+                    skip_output=not debug_install,
+                )
                 progress.reset(task, total=1, completed=1)
 
     if download:
@@ -386,7 +400,7 @@ def update(path, debug_install):
             for label, req in labeller(sorted(updated_dependencies, key=str.lower)):
                 task = progress.add_task(f"{label} {req}", total=None)
 
-                env.install(req)
+                uv_pip_command(env, req, [], console, skip_output=not debug_install)
                 progress.reset(task, total=1, completed=1)
 
     else:
