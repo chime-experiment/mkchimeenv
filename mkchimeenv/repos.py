@@ -8,7 +8,7 @@ def _clone_path(repo, ssh=True):
         return f"https://github.com/{repo}.git"
 
 
-private_repositories = {
+private_repositories: dict[str, tuple] = {
     "chimedb-config": (
         _clone_path("chime-experiment/chimedb_config", ssh=True),
         None,
@@ -17,7 +17,7 @@ private_repositories = {
 }
 
 
-def public_repositories(ssh=True):
+def public_repositories(ssh: bool = True) -> dict[str, tuple]:
     return {
         # radio cosmology packages
         # format: (github path, branch, project subdirectory)

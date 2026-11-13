@@ -1,6 +1,5 @@
 """Install and manage CHIME pipeline environments."""
 
-import json
 import sys
 import venv
 from importlib.metadata import PackageNotFoundError, version
@@ -15,7 +14,7 @@ from rich.text import Text
 
 from .gitutils import RichProgress, update_single_repo
 from .repos import private_repositories, public_repositories
-from .venvutils import VirtualEnv, install_to_env
+from .venvutils import VirtualEnv, install_to_env, resolve_dependencies
 
 try:
     __version__ = version("mkchimeenv")
@@ -209,30 +208,12 @@ def create(
         console.print("This might take a moment...")
 
         # Get the list of packages to install using a pip dry-run report
-        proc = install_to_env(
-            env,
+        requirements = resolve_dependencies(
             f"{MAIN_REPO} @ git+{chime_repositories[MAIN_REPO][0]}",
-            ["--dry-run", "--report", "-", "--quiet"],
+            env,
             console,
-            skip_output=True,
+            list(chime_repositories.keys()),
         )
-
-        report = json.loads(proc.stdout)
-        requirements = []
-
-        # Iterate through all the packages that would be installed
-        for entry in report.get("install", []):
-            meta = entry.get("metadata", {})
-            pkg_name = meta.get("name")
-
-            # Filter chime repos, since these will be installed directly
-            # from the clone
-            if pkg_name.replace(".", "-") not in chime_repositories:
-                if entry.get("is_direct", False):
-                    # package provided via a direct URL
-                    requirements.append(f"{pkg_name}@{meta['url']}")
-                else:
-                    requirements.append(f"{pkg_name}=={meta['version']}")
 
         # Install all the non-editable dependencies
         console.rule(f"Installing {len(requirements)} dependencies...")
@@ -322,9 +303,8 @@ def update(path):
 
     # Iterate through repos and fetch any recent git changes
     console.rule("Fetching remote updates")
-    updated = []
-    failed = []
     repos_to_update = []
+    success = True
 
     for d in sorted(x for x in code_path.iterdir() if x.is_dir()):
         try:
@@ -344,11 +324,7 @@ def update(path):
 
             result, message = update_single_repo(repo)
 
-            if result:
-                # TODO: handle dependency changes
-                updated.append(repo)
-            elif result is False:
-                failed.append(repo)
+            success &= result is not False  # can be True or None
 
             style, status = STATUS_MAP[result]
 
@@ -358,6 +334,58 @@ def update(path):
                 total=1,
                 completed=1,
             )
+
+    if not success:
+        console.print("[red]Failed to update at least one package. Aborting...[/]")
+        sys.exit(1)
+
+    console.rule("Checking for dependency updates...")
+    # Get the list of cloned packages and check each one for updates
+    chime_repositories = {**public_repositories(ssh=True), **private_repositories}
+    # Resolve repos that exist and project paths
+    updated_dependencies = []
+
+    with Progress(*Progress.get_default_columns()[:-1], console=console) as progress:
+        for label, (name, (_, _, sub_dir)) in labeller(chime_repositories.items()):
+            package_path = code_path / name
+
+            if sub_dir is not None:
+                package_path = package_path / sub_dir
+
+            if package_path.exists():
+                task = progress.add_task(f"{label} {package_path.name}", total=None)
+                updated_dependencies.extend(
+                    resolve_dependencies(
+                        str(package_path),
+                        env,
+                        console,
+                        list(chime_repositories.keys()),
+                    )
+                )
+                progress.reset(task, total=1, completed=1)
+
+    if updated_dependencies:
+        # This should now only contain a set of external dependencies
+        console.rule("Finding external dependencies...")
+        updated_dependencies = resolve_dependencies(
+            updated_dependencies,
+            env,
+            console,
+            list(chime_repositories.keys()),
+        )
+
+        with Progress(
+            *Progress.get_default_columns()[:-1],
+            console=console,
+        ) as progress:
+            for label, req in labeller(sorted(updated_dependencies, key=str.lower)):
+                task = progress.add_task(f"{label} {req}", total=None)
+
+                env.install(req)
+                progress.reset(task, total=1, completed=1)
+
+    else:
+        console.print("No dependencies to update.")
 
 
 def labeller(enumerable):

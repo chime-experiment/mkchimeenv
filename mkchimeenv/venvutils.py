@@ -1,7 +1,9 @@
 """Helpers to manage venvs."""
 
+import json
 import re
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -34,7 +36,7 @@ def _drain_stream(stream, lines, callback):
 
 def install_to_env(
     env: VirtualEnv,
-    pkgstr: str,
+    pkgstr: str | list[str],
     options: list,
     console: Console,
     skip_output: bool = False,
@@ -61,8 +63,11 @@ def install_to_env(
     CompletedProcess
         Same output as returned by `subprocess.run`.
     """
+    if isinstance(pkgstr, str):
+        pkgstr = [pkgstr]
+
     proc = subprocess.Popen(
-        [Path(env.path) / "bin" / "pip", "install", pkgstr, *options],
+        [Path(env.path) / "bin" / "pip", "install", *map(str, pkgstr), *options],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -110,6 +115,44 @@ def install_to_env(
             f"stdout: {stdout}\n\n"
             f"stderr: {stderr}"
         )
-        raise RuntimeError()
+        sys.exit(1)
 
     return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
+
+
+def resolve_dependencies(
+    package: str | list[str],
+    venv: VirtualEnv,
+    console: Console,
+    ignore_deps: list | None = None,
+):
+    """Return a list of pip-installable dependencies, excluding those in `ignore_deps`."""
+    # Get the list of packages to install using a pip dry-run report
+    proc = install_to_env(
+        venv,
+        package,
+        ["--dry-run", "--report", "-", "--quiet"],
+        console,
+        skip_output=True,
+    )
+
+    report = json.loads(proc.stdout)
+    requirements = []
+
+    if not ignore_deps:
+        ignore_deps = []
+
+    # Iterate through all the packages that would be installed
+    for entry in report.get("install", []):
+        meta = entry.get("metadata", {})
+        pkg_name = meta.get("name")
+        # Filter chime repos, since these will be installed directly
+        # from the clone
+        if pkg_name.replace(".", "-") not in ignore_deps:
+            if entry.get("is_direct", False):
+                # package provided via a direct URL
+                requirements.append(f"{pkg_name}@{meta['url']}")
+            else:
+                requirements.append(f"{pkg_name}=={meta['version']}")
+
+    return requirements
