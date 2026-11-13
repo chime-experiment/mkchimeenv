@@ -123,7 +123,7 @@ def update_single_repo(repo: git.Repo) -> tuple[bool | None, str]:
     # Always abort on dirty state
     if repo.is_dirty(untracked_files=True):
         message = (
-            f"on '{REMOTE} with uncommitted changes! Move them to a new branch.'"
+            f"on '{main}' with uncommitted changes! Move them to a new branch.'"
             if branch == main
             else "found uncommitted changes; commit your changes and try again!"
         )
