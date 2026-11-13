@@ -57,3 +57,18 @@ are installed in editable mode, and recent updates to setuptools will break lang
 tools ability to find the source files associated with any packages installed in
 editable mode. This flag enables legacy editable install behaviour, allowing Pylance
 and other tools to work correctly.
+
+## Updating an existing environment
+
+`mkchimeenv` can also help keep an editable environment up-to-date:
+```
+$ mkchimeenv update mychimeenv
+```
+
+### Update Rules
+
+Updates are designed to be conservative and to avoid breaking any local changes. The
+update command does the following:
+- Fetches remote changes
+- Fast-forwards remote changes into the current branch, skipping if there are conflicts
+- Rebases the current branch against `origin/main`, skipping if there are conflicts

@@ -1,10 +1,6 @@
 """Install and manage CHIME pipeline environments."""
 
-import json
-import re
-import subprocess
 import sys
-import threading
 import venv
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -12,10 +8,13 @@ from pathlib import Path
 import click
 import git
 from rich.console import Console
-from rich.progress import Progress
+from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from rich.text import Text
-from virtualenvapi.manage import VirtualEnvironment
+
+from .gitutils import RichProgress, update_single_repo
+from .repos import private_repositories, public_repositories
+from .venvutils import VirtualEnv, resolve_dependencies, uv_pip_command
 
 try:
     __version__ = version("mkchimeenv")
@@ -26,254 +25,8 @@ except PackageNotFoundError:
 del version, PackageNotFoundError
 
 
-# Installing this repo will install all other
-# CHIME packages and dependencies
+# Installing this repo will install all other CHIME packages and dependencies
 MAIN_REPO = "ch_pipeline"
-
-
-def _clone_path(repo, ssh=True):
-    if ssh:
-        return f"ssh://git@github.com/{repo}"
-    else:
-        return f"https://github.com/{repo}.git"
-
-
-def public_repositories(ssh=True):
-    return {
-        # radio cosmology packages
-        # format: (github path, branch, project subdirectory)
-        "caput": (_clone_path("radiocosmology/caput", ssh=ssh), None, None),
-        "cora": (_clone_path("radiocosmology/cora", ssh=ssh), None, None),
-        "driftscan": (_clone_path("radiocosmology/driftscan", ssh=ssh), None, None),
-        "draco": (_clone_path("radiocosmology/draco", ssh=ssh), None, None),
-        "fluxcat": (_clone_path("radiocosmology/fluxcat", ssh=ssh), None, None),
-        "wyvern": (
-            _clone_path("radiocosmology/wyvern", ssh=ssh),
-            None,
-            "bindings/python",
-        ),
-        # chimedb core code and extensions
-        "chimedb": (_clone_path("chime-experiment/chimedb", ssh=ssh), None, None),
-        "chimedb-data_index": (
-            _clone_path("chime-experiment/chimedb_di", ssh=ssh),
-            None,
-            None,
-        ),
-        "chimedb-dataflag": (
-            _clone_path("chime-experiment/chimedb_dataflag", ssh=ssh),
-            None,
-            None,
-        ),
-        "chimedb-dataset": (
-            _clone_path("chime-experiment/chimedb_dataset", ssh=ssh),
-            None,
-            None,
-        ),
-        # chime specific repositories
-        "ch_ephem": (_clone_path("chime-experiment/ch_ephem", ssh=ssh), None, None),
-        "ch_util": (_clone_path("chime-experiment/ch_util", ssh=ssh), None, None),
-        "ch_pipeline": (
-            _clone_path("chime-experiment/ch_pipeline", ssh=ssh),
-            None,
-            None,
-        ),
-    }
-
-
-private_repositories = {
-    "chimedb-config": (
-        _clone_path("chime-experiment/chimedb_config", ssh=True),
-        None,
-        None,
-    ),
-}
-
-
-def match_opcode(opcode: int) -> tuple[int, str, bool]:
-    """Match GitPython opcode to a description of the operation.
-
-    Parameters
-    ----------
-    opcode
-        GitPython opcode.
-
-    Returns
-    -------
-    code
-        Code for the actual operation being performed. This differs from the opcode as
-        the input opcode may contain extra information.
-    msg
-        Text description of operation.
-    done
-        Has the operation just finished.
-    """
-
-    codes = (
-        (git.RemoteProgress.COUNTING, "Counting (remote)"),
-        (git.RemoteProgress.COMPRESSING, "Compressing (remote)"),
-        (git.RemoteProgress.RECEIVING, "Receiving"),
-        (git.RemoteProgress.RESOLVING, "Resolving"),
-    )
-
-    done = (opcode & git.RemoteProgress.END) != 0
-
-    for code, msg in codes:
-        if opcode & code != 0:
-            return (code, msg, done)
-
-    return (0, "Unknown", done)
-
-
-class RichProgress(git.RemoteProgress):
-    """Use `rich` to show the progress of a GitPython operation.
-
-    This shows two bars, one for the overall operation progress, just indicating at
-    which stage the process is and a second for the progress of the current operation
-    (which is more easily metered)
-
-    Parameters
-    ----------
-    label
-        A string label to use on the progress bar.
-    progress
-        The Progress instance to add the meters too.
-    """
-
-    def __init__(self, label: str, progress: Progress):
-        super().__init__()
-
-        self.progress = progress
-        self.overall_task = progress.add_task(f"{label}", total=4)
-
-        self.tasks: dict[int, int] = {}
-
-    def update(self, op_code, cur_count, max_count=None, message=""):
-        code, msg, done = match_opcode(op_code)
-
-        if code not in self.tasks:
-            self.tasks[code] = self.progress.add_task(msg, total=max_count)
-
-        task = self.tasks[code]
-        self.progress.update(task, completed=cur_count, visible=(not done))
-
-        if done:
-            self.progress.advance(self.overall_task)
-
-
-class VirtualEnv(VirtualEnvironment):
-    """Fix name parsing for install packages."""
-
-    @property
-    def installed_package_names(self):
-        names = []
-        for name, _ in self.installed_packages:
-            name = re.split(r"\s*@\s*|==", name, maxsplit=1)[0]
-            names.append(name.strip().lower())
-
-        return names
-
-
-def _drain_stream(stream, lines, callback):
-    for line in stream:
-        lines.append(line)
-
-        if callback:
-            callback(line.rstrip())
-
-    stream.close()
-
-
-def install_to_env(
-    env: VirtualEnv,
-    pkgstr: str,
-    options: list,
-    console: Console,
-    skip_output: bool = False,
-):
-    """Install a package into a venv.
-
-    Intended to be a more verbose version of `env.install`.
-
-    Parameters
-    ----------
-    env
-        Virtual environment manager.
-    pkgstr
-        Package to install. Supports whatever formats pip supports.
-    options
-        List of options passed to pip via `subprocess.Popen`.
-    console
-        Console handler.
-    skip_output
-        If True, do not display the subprocess stdout or stderr.
-
-    Returns
-    -------
-    CompletedProcess
-        Same output as returned by `subprocess.run`.
-    """
-    proc = subprocess.Popen(
-        [Path(env.path) / "bin" / "pip", "install", pkgstr, *options],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
-
-    # Ensure that we don't block `stderr` while printing `stdout`
-    output_lines = []
-    error_lines = []
-
-    output_callback = (
-        None
-        if skip_output
-        else lambda s: console.print(s, soft_wrap=True, highlight=True)
-    )
-    error_callback = (
-        None if skip_output else lambda s: console.print(s, soft_wrap=True, style="red")
-    )
-
-    # drain in separate threads. This lets us separate outputs while
-    # ensuring we never hit a deadlock, in the case where we want to
-    # write console output in real time
-    threads = [
-        threading.Thread(
-            target=_drain_stream, args=(proc.stdout, output_lines, output_callback)
-        ),
-        threading.Thread(
-            target=_drain_stream, args=(proc.stderr, error_lines, error_callback)
-        ),
-    ]
-    # run threads to completion
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-
-    returncode = proc.wait()
-
-    stdout = "".join(output_lines)
-    stderr = "".join(error_lines)
-
-    if returncode != 0:
-        console.print(
-            f"[bold red] Subprocess failed with return code {proc.returncode}[/bold red]\n\n"
-            f"stdout: {stdout}\n\n"
-            f"stderr: {stderr}"
-        )
-        raise RuntimeError()
-
-    return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
-
-
-def labeller(enumerable):
-    """For each item in an iterable, also return a string label giving the position."""
-
-    total = len(enumerable)
-
-    for ii, item in enumerate(enumerable):
-        label = f"[{ii + 1:{len(str(total))}d}/{total:d}]"
-        yield label, item
 
 
 @click.group()
@@ -323,6 +76,11 @@ def cli():
     is_flag=True,
     help="Do not install packages in editable mode.",
 )
+@click.option(
+    "--debug-install",
+    is_flag=True,
+    help="Display all output text during install",
+)
 def create(
     path: Path,
     prompt: str,
@@ -332,6 +90,7 @@ def create(
     ignore_system_packages: bool,
     chime_member: bool,
     release: bool,
+    debug_install: bool,
 ):
     """Install a CHIME pipeline environment at the specified PATH.
 
@@ -391,7 +150,7 @@ def create(
             *Progress.get_default_columns()[:-1], console=console
         ) as progress:
             task = progress.add_task("Installing...", total=None)
-            install_to_env(
+            uv_pip_command(
                 env, f"{MAIN_REPO} @ git+{pkgargs[0]}", build_options, console
             )
             progress.reset(task, total=1, completed=1)
@@ -455,30 +214,13 @@ def create(
         console.print("This might take a moment...")
 
         # Get the list of packages to install using a pip dry-run report
-        proc = install_to_env(
+        requirements = resolve_dependencies(
+            str(code_path / MAIN_REPO / "pyproject.toml"),
             env,
-            f"{MAIN_REPO} @ git+{chime_repositories[MAIN_REPO][0]}",
-            ["--dry-run", "--report", "-", "--quiet"],
             console,
-            skip_output=True,
+            list(chime_repositories.keys()),
+            skip_output=not debug_install,
         )
-
-        report = json.loads(proc.stdout)
-        requirements = []
-
-        # Iterate through all the packages that would be installed
-        for entry in report.get("install", []):
-            meta = entry.get("metadata", {})
-            pkg_name = meta.get("name")
-
-            # Filter chime repos, since these will be installed directly
-            # from the clone
-            if pkg_name.replace(".", "-") not in chime_repositories:
-                if entry.get("is_direct", False):
-                    # package provided via a direct URL
-                    requirements.append(f"{pkg_name}@{meta['url']}")
-                else:
-                    requirements.append(f"{pkg_name}=={meta['version']}")
 
         # Install all the non-editable dependencies
         console.rule(f"Installing {len(requirements)} dependencies...")
@@ -507,9 +249,7 @@ def create(
             ):
                 task = progress.add_task(f"{label} {chime_package}", total=None)
 
-                options = [
-                    *build_options,
-                ]
+                options = [*build_options]
                 if compat:
                     options += ["--config-settings", "editable_mode=compat"]
 
@@ -535,11 +275,129 @@ def create(
             console.print(f"Failed to download skyfield data. Error: {e}")
 
 
+STATUS_MAP = {
+    True: ("green", "Updated"),
+    False: ("red", "Update failed"),
+    None: ("blue", "Nothing to update"),
+}
+
+
 @cli.command()
 @click.argument("path", type=click.Path(resolve_path=True, path_type=Path))
-def update(path):
-    """Update all the packages in the virtualenvironment at PATH.
+@click.option(
+    "--debug-install",
+    is_flag=True,
+    help="Display all output text during install",
+)
+def update(path, debug_install):
+    """Update all the packages in the virtualenvironment at PATH."""
+    console = Console()
 
-    Not yet implemented.
-    """
-    raise NotImplementedError()
+    code_path = path / "code"
+    venv_path = path / "venv"
+
+    if not code_path.exists():
+        console.print(
+            "No code path found - can't update an env installed as `release`!"
+        )
+        sys.exit(1)
+
+    if not venv_path.exists():
+        console.print("`venv` path not found - check that this is a valid environment!")
+        sys.exit(1)
+
+    env = VirtualEnv(str(venv_path))
+
+    console.print("Upgrading pip")
+    env.upgrade("pip")
+
+    # Iterate through repos and fetch any recent git changes
+    console.rule("Fetching remote updates")
+    repos_to_update = []
+    success = True
+
+    for d in sorted(x for x in code_path.iterdir() if x.is_dir()):
+        try:
+            repo = git.Repo(d)
+        except git.InvalidGitRepositoryError:
+            continue
+
+        repos_to_update.append((repo, d))
+
+    with Progress(
+        SpinnerColumn(finished_text=" "),
+        TextColumn("{task.description}"),
+        console=console,
+    ) as progress:
+        for label, (repo, d) in labeller(repos_to_update):
+            task = progress.add_task(f"{label} {d.name!s}", total=len(repos_to_update))
+
+            result, message = update_single_repo(repo)
+
+            success &= result is not False  # can be True or None
+
+            style, status = STATUS_MAP[result]
+
+            progress.update(
+                task,
+                description=f"[{style}]{status}[/] [bold]{d.name!s}[/]: {message}",
+                total=1,
+                completed=1,
+            )
+
+    if not success:
+        console.print("[red]Failed to update at least one package. Aborting...[/]")
+        sys.exit(1)
+
+    console.rule("Checking for dependency updates...")
+    # Get the list of cloned packages and check each one for updates
+    chime_repositories = {**public_repositories(ssh=True), **private_repositories}
+    # Resolve repos that exist and project paths
+    updated_dependencies = set()
+
+    with Progress(*Progress.get_default_columns()[:-1], console=console) as progress:
+        for label, (name, (_, _, sub_dir)) in labeller(chime_repositories.items()):
+            package_path = code_path / name
+
+            if sub_dir is not None:
+                package_path = package_path / sub_dir
+
+            if package_path.exists():
+                task = progress.add_task(f"{label} {package_path.name}", total=None)
+                updated_dependencies.update(
+                    resolve_dependencies(
+                        str(package_path / "pyproject.toml"),
+                        env,
+                        console,
+                        list(chime_repositories.keys()),
+                        skip_output=not debug_install,
+                    )
+                )
+                progress.reset(task, total=1, completed=1)
+
+    if updated_dependencies:
+        console.print(f"Found {len(updated_dependencies)} dependencies to update.")
+        console.rule("Installing updated dependencies...")
+
+        with Progress(
+            *Progress.get_default_columns()[:-1],
+            console=console,
+        ) as progress:
+            for label, req in labeller(sorted(updated_dependencies, key=str.lower)):
+                task = progress.add_task(f"{label} {req}", total=None)
+
+                env.install(req)
+                progress.reset(task, total=1, completed=1)
+
+    else:
+        console.print("No dependencies to update.")
+
+
+def labeller(enumerable):
+    """For each item in an iterable, also return a string label giving the position."""
+
+    total = len(enumerable)
+
+    for ii, item in enumerate(enumerable):
+        label = f"[{ii + 1:{len(str(total))}d}/{total:d}]"
+        yield label, item
