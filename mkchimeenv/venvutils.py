@@ -37,11 +37,12 @@ def _drain_stream(stream, lines, callback):
 
 def uv_pip_command(
     env: VirtualEnv,
-    pkgstr: str | list[str],
+    pkgstr: str | list[str] | list[Path] | list[str | Path],
     options: list,
     console: Console,
     uv_command: str = "install",
     skip_output: bool = False,
+    expect_stderr: bool = False,
 ):
     """Run a pip command in a venv.
 
@@ -57,8 +58,13 @@ def uv_pip_command(
         List of options passed to pip via `subprocess.Popen`.
     console
         Console handler.
+    uv_command
+        Command string to pass to `uv pip`
     skip_output
         If True, do not display the subprocess stdout or stderr.
+    expect_stderr
+        If True, expect that the command will print output to stderr,
+        and do not make stderr red.
 
     Returns
     -------
@@ -67,6 +73,8 @@ def uv_pip_command(
     """
     if isinstance(pkgstr, str):
         pkgstr = [pkgstr]
+
+    stderr_style = None if expect_stderr else "red"
 
     proc = subprocess.Popen(
         [
@@ -94,7 +102,9 @@ def uv_pip_command(
         else lambda s: console.print(s, soft_wrap=True, highlight=True)
     )
     error_callback = (
-        None if skip_output else lambda s: console.print(s, soft_wrap=True, style="red")
+        None
+        if skip_output
+        else lambda s: console.print(s, soft_wrap=True, style=stderr_style)
     )
 
     # drain in separate threads. This lets us separate outputs while
@@ -131,7 +141,7 @@ def uv_pip_command(
 
 
 def resolve_dependencies(
-    package: str | list[str],
+    package: str | list[str] | list[Path] | list[str | Path],
     env: VirtualEnv,
     console: Console,
     ignore_deps: list | None = None,
