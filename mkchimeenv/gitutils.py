@@ -81,7 +81,7 @@ def find_main_branch(repo: git.Repo):
     """Prefer origin/HEAD, fall back to main, then master."""
     try:
         ref = repo.git.symbolic_ref(f"refs/remotes/{REMOTE}/HEAD")
-        return ref.rsplit("/", 1)[-1]
+        return ref.removeprefix(f"refs/remotes/{REMOTE}/")
     except git.GitCommandError:
         pass
     remote_refs = {r.remote_head for r in repo.remotes[REMOTE].refs}

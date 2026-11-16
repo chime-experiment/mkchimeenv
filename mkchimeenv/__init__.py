@@ -264,14 +264,15 @@ def create(
             *Progress.get_default_columns()[:-1], console=console
         ) as progress:
             task = progress.add_task("Installing...", total=None)
-            uv_pip_command(
-                env,
-                requirements,
-                build_options,
-                console,
-                skip_output=False,
-                expect_stderr=True,
-            )
+            if requirements:
+                uv_pip_command(
+                    env,
+                    requirements,
+                    build_options,
+                    console,
+                    skip_output=False,
+                    expect_stderr=True,
+                )
             progress.reset(task, total=1, completed=1)
 
         console.rule("Installing CHIME packages")
@@ -440,7 +441,7 @@ def update(path: Path, debug_install: bool, workers: int):
             if package_path.exists():
                 requirements.append(package_path / "pyproject.toml")
 
-        resolve_dependencies(
+        updated_dependencies = resolve_dependencies(
             requirements,
             env,
             console,
