@@ -43,7 +43,7 @@ def uv_pip_command(
     uv_command: str = "install",
     skip_output: bool = False,
     expect_stderr: bool = False,
-):
+) -> subprocess.CompletedProcess:
     """Run a pip command in a venv.
 
     Intended to be a more verbose version of `env.install`.
@@ -146,7 +146,7 @@ def resolve_dependencies(
     console: Console,
     ignore_deps: list | None = None,
     skip_output: bool = False,
-):
+) -> list[str]:
     if isinstance(package, str):
         package = [package]
 
