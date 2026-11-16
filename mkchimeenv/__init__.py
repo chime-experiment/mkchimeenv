@@ -2,6 +2,8 @@
 
 import sys
 import venv
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import partial
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -81,6 +83,13 @@ def cli():
     is_flag=True,
     help="Display all output text during install",
 )
+@click.option(
+    "--workers",
+    show_default=True,
+    default=4,
+    type=int,
+    help="Number of threads to use.",
+)
 def create(
     path: Path,
     prompt: str,
@@ -91,6 +100,7 @@ def create(
     chime_member: bool,
     release: bool,
     debug_install: bool,
+    workers: int,
 ):
     """Install a CHIME pipeline environment at the specified PATH.
 
@@ -203,18 +213,37 @@ def create(
         code_path = path / "code"
         code_path.mkdir()
 
-        with Progress(
-            *Progress.get_default_columns()[:-1], console=console
-        ) as progress:
+        with (
+            Progress(*Progress.get_default_columns()[:-1], console=console) as progress,
+            ThreadPoolExecutor(max_workers=workers) as pool,
+        ):
+            failed = {}
+            futures = {}
+
             for label, (name, (url, target, _)) in labeller(chime_repositories.items()):
                 clone_path = code_path / name
 
-                git.Repo.clone_from(
+                func = partial(
+                    git.Repo.clone_from,
                     url,
                     branch=target,
                     to_path=clone_path,
                     progress=RichProgress(f"{label} {name}", progress),
+                    env={"GIT_TERMINAL_PROMPT": "0"},
                 )
+
+                futures[pool.submit(func)] = label
+
+            for fut in as_completed(futures):
+                try:
+                    fut.result()
+                except Exception as exc:  # noqa: BLE001
+                    failed[futures[fut]] = exc
+                    console.print(f"[red]x[/] {futures[fut]}: {exc}")
+
+        if failed:
+            console.print("[red]Failed to clone some repos![/]")
+            sys.exit(1)
 
         console.rule("Analyzing dependencies")
         console.print("This might take a moment...")
@@ -230,18 +259,20 @@ def create(
 
         # Install all the non-editable dependencies
         console.rule(f"Installing {len(requirements)} dependencies...")
-
+        # Let uv run in multiple threads, handling its own concurrency
         with Progress(
-            *Progress.get_default_columns()[:-1],
-            console=console,
+            *Progress.get_default_columns()[:-1], console=console
         ) as progress:
-            for label, req in labeller(sorted(requirements, key=str.lower)):
-                task = progress.add_task(f"{label} {req}", total=None)
-
-                uv_pip_command(
-                    env, req, build_options, console, skip_output=not debug_install
-                )
-                progress.reset(task, total=1, completed=1)
+            task = progress.add_task("Installing...", total=None)
+            uv_pip_command(
+                env,
+                requirements,
+                build_options,
+                console,
+                skip_output=False,
+                expect_stderr=True,
+            )
+            progress.reset(task, total=1, completed=1)
 
         console.rule("Installing CHIME packages")
         # Install the CHIME packages in editable mode. Don't try to resolve any dependencies,
@@ -249,31 +280,33 @@ def create(
         # NOTE: this could in theory break if they have *build* time dependencies on one
         # another and they are installed in the wrong order, but it would be a pretty
         # terrible idea to do this
+        options = [*build_options]
+        if compat:
+            options += ["--config-settings", "editable_mode=compat"]
+
+        requirements = []
+        for chime_package, (_, _, project_dir) in chime_repositories.items():
+            project_path = code_path / chime_package
+
+            if project_dir is not None:
+                project_path = project_path / project_dir
+
+            requirements.append("-e")
+            requirements.append(project_path)
+
         with Progress(
             *Progress.get_default_columns()[:-1], console=console
         ) as progress:
-            for label, (chime_package, (_, _, project_dir)) in labeller(
-                chime_repositories.items()
-            ):
-                task = progress.add_task(f"{label} {chime_package}", total=None)
-
-                options = [*build_options]
-                if compat:
-                    options += ["--config-settings", "editable_mode=compat"]
-
-                project_path = code_path / chime_package
-
-                if project_dir is not None:
-                    project_path = project_path / project_dir
-
-                uv_pip_command(
-                    env,
-                    f"-e {project_path}",
-                    options,
-                    console,
-                    skip_output=not debug_install,
-                )
-                progress.reset(task, total=1, completed=1)
+            task = progress.add_task("Installing...", total=None)
+            uv_pip_command(
+                env,
+                requirements,
+                options,
+                console,
+                skip_output=False,
+                expect_stderr=True,
+            )
+            progress.reset(task, total=1, completed=1)
 
     if download:
         console.rule("Downloading skyfield ephemeris data")
@@ -303,7 +336,14 @@ STATUS_MAP = {
     is_flag=True,
     help="Display all output text during install",
 )
-def update(path, debug_install):
+@click.option(
+    "--workers",
+    show_default=True,
+    default=4,
+    type=int,
+    help="Number of threads to use.",
+)
+def update(path: Path, debug_install: bool, workers: int):
     """Update all the packages in the virtualenvironment at PATH."""
     console = Console()
 
@@ -338,18 +378,36 @@ def update(path, debug_install):
 
         repos_to_update.append((repo, d))
 
-    with Progress(
-        SpinnerColumn(finished_text=" "),
-        TextColumn("{task.description}"),
-        console=console,
-    ) as progress:
+    with (
+        Progress(
+            SpinnerColumn(finished_text=" "),
+            TextColumn("{task.description}"),
+            console=console,
+        ) as progress,
+        ThreadPoolExecutor(max_workers=workers) as pool,
+    ):
+        futures = {}
+
         for label, (repo, d) in labeller(repos_to_update):
             task = progress.add_task(f"{label} {d.name!s}", total=len(repos_to_update))
 
-            result, message = update_single_repo(repo)
+            def do_work(repo=repo, d=d, label=label, task=task):
+                progress.update(
+                    task, description=f"{label} [bold]{d.name}[/]: updating..."
+                )
+                return update_single_repo(repo)
+
+            futures[pool.submit(do_work)] = (task, d)
+
+        for fut in as_completed(futures):
+            task, d = futures[fut]
+
+            try:
+                result, message = fut.result()
+            except Exception as exc:  # noqa: BLE001
+                result, message = False, str(exc)
 
             success &= result is not False  # can be True or None
-
             style, status = STATUS_MAP[result]
 
             progress.update(
@@ -370,24 +428,27 @@ def update(path, debug_install):
     updated_dependencies = set()
 
     with Progress(*Progress.get_default_columns()[:-1], console=console) as progress:
-        for label, (name, (_, _, sub_dir)) in labeller(chime_repositories.items()):
+        task = progress.add_task("Analyzing dependencies")
+
+        requirements = []
+        for name, (_, _, sub_dir) in chime_repositories.items():
             package_path = code_path / name
 
             if sub_dir is not None:
                 package_path = package_path / sub_dir
 
             if package_path.exists():
-                task = progress.add_task(f"{label} {package_path.name}", total=None)
-                updated_dependencies.update(
-                    resolve_dependencies(
-                        str(package_path / "pyproject.toml"),
-                        env,
-                        console,
-                        list(chime_repositories.keys()),
-                        skip_output=not debug_install,
-                    )
-                )
-                progress.reset(task, total=1, completed=1)
+                requirements.append(package_path / "pyproject.toml")
+
+        resolve_dependencies(
+            requirements,
+            env,
+            console,
+            list(chime_repositories.keys()),
+            skip_output=not debug_install,
+        )
+
+        progress.reset(task, total=1, completed=1)
 
     if updated_dependencies:
         console.print(f"Found {len(updated_dependencies)} dependencies to update.")
@@ -397,11 +458,17 @@ def update(path, debug_install):
             *Progress.get_default_columns()[:-1],
             console=console,
         ) as progress:
-            for label, req in labeller(sorted(updated_dependencies, key=str.lower)):
-                task = progress.add_task(f"{label} {req}", total=None)
+            task = progress.add_task("Installing...", total=None)
 
-                uv_pip_command(env, req, [], console, skip_output=not debug_install)
-                progress.reset(task, total=1, completed=1)
+            uv_pip_command(
+                env,
+                list(updated_dependencies),
+                [],
+                console,
+                skip_output=False,
+                expect_stderr=True,
+            )
+            progress.reset(task, total=1, completed=1)
 
     else:
         console.print("No dependencies to update.")
