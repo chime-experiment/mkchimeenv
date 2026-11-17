@@ -1,5 +1,6 @@
 """Install and manage CHIME pipeline environments."""
 
+import os
 import sys
 import venv
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -150,6 +151,9 @@ def create(
         chime_repositories = public_repositories(ssh=False)
 
     build_options = ["--no-build-isolation"] if fast else []
+    # NB: this is required for now because we use an old version of
+    # `numcodecs`. It can be removed in the future
+    extra_sys_env = {"CFLAGS": "-std=gnu17"}
 
     # Release build just pip installs the main repository at the main branch
     if release:
@@ -161,7 +165,11 @@ def create(
         ) as progress:
             task = progress.add_task("Installing...", total=None)
             uv_pip_command(
-                env, f"{MAIN_REPO} @ git+{pkgargs[0]}", build_options, console
+                env,
+                f"{MAIN_REPO} @ git+{pkgargs[0]}",
+                build_options,
+                console,
+                extra_sys_env=extra_sys_env,
             )
             progress.reset(task, total=1, completed=1)
 
@@ -198,6 +206,7 @@ def create(
                         build_options,
                         console,
                         skip_output=not debug_install,
+                        extra_sys_env=extra_sys_env,
                     )
                     progress.reset(task, total=1, completed=1)
 
@@ -272,6 +281,7 @@ def create(
                     console,
                     skip_output=False,
                     expect_stderr=True,
+                    extra_sys_env=extra_sys_env,
                 )
             progress.reset(task, total=1, completed=1)
 
@@ -306,6 +316,7 @@ def create(
                 console,
                 skip_output=False,
                 expect_stderr=True,
+                extra_sys_env=extra_sys_env,
             )
             progress.reset(task, total=1, completed=1)
 
@@ -370,6 +381,8 @@ def update(path: Path, debug_install: bool, workers: int):
     console.rule("Fetching remote updates")
     repos_to_update = []
     success = True
+
+    extra_sys_env = {**os.environ, "CFLAGS": "-std=gnu17"}
 
     for d in sorted(x for x in code_path.iterdir() if x.is_dir()):
         try:
@@ -468,6 +481,7 @@ def update(path: Path, debug_install: bool, workers: int):
                 console,
                 skip_output=False,
                 expect_stderr=True,
+                extra_sys_env=extra_sys_env,
             )
             progress.reset(task, total=1, completed=1)
 
