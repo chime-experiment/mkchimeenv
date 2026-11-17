@@ -1,6 +1,7 @@
 """Helpers to manage venvs."""
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -46,6 +47,7 @@ def uv_pip_command(
     uv_command: str = "install",
     skip_output: bool = False,
     expect_stderr: bool = False,
+    extra_sys_env: dict | None = None,
 ) -> subprocess.CompletedProcess:
     """Run a pip command in a venv.
 
@@ -77,6 +79,10 @@ def uv_pip_command(
     if isinstance(pkgstr, str):
         pkgstr = [pkgstr]
 
+    sys_env = {**os.environ}
+    if extra_sys_env:
+        sys_env.update(extra_sys_env)
+
     stderr_style = None if expect_stderr else "red"
 
     proc = subprocess.Popen(
@@ -89,6 +95,7 @@ def uv_pip_command(
             *map(str, pkgstr),
             *options,
         ],
+        env=sys_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
