@@ -9,7 +9,10 @@ import tomllib
 from pathlib import Path
 
 from rich.console import Console
+from uv import find_uv_bin
 from virtualenvapi.manage import VirtualEnvironment
+
+UV_EXECUTABLE = find_uv_bin()
 
 
 class VirtualEnv(VirtualEnvironment):
@@ -78,7 +81,7 @@ def uv_pip_command(
 
     proc = subprocess.Popen(
         [
-            "uv",
+            UV_EXECUTABLE,
             "pip",
             uv_command,
             "--python",
